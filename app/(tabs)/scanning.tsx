@@ -3,24 +3,28 @@ import * as ImagePicker from "expo-image-picker";
 import { StatusBar } from "expo-status-bar";
 import React, { useEffect, useState } from "react";
 import {
-    ActivityIndicator,
-    Alert,
-    Image,
-    SafeAreaView,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View
+  ActivityIndicator,
+  Alert,
+  Image,
+  SafeAreaView,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
 } from "react-native";
-import { AnalysisResult, analyzeImage, uploadImageToFirebase } from "../../services/scanning.service";
+import {
+  AnalysisResult,
+  analyzeImage,
+  uploadImageToFirebase,
+} from "../../services/scanning.service";
 
 export default function ScanningScreen() {
-   const [image, setImage] = useState<string | null>(null);
-   const [uploading, setUploading] = useState<boolean>(false);
-   const [firebaseUrl, setFirebaseUrl] = useState<string | null>(null);
-   const [prediction, setPrediction] = useState<AnalysisResult | null>(null);
-   const [loading, setLoading] = useState<boolean>(false);
+  const [image, setImage] = useState<string | null>(null);
+  const [uploading, setUploading] = useState<boolean>(false);
+  const [firebaseUrl, setFirebaseUrl] = useState<string | null>(null);
+  const [prediction, setPrediction] = useState<AnalysisResult | null>(null);
+  const [loading, setLoading] = useState<boolean>(false);
 
   useEffect(() => {
     (async () => {
@@ -117,20 +121,22 @@ export default function ScanningScreen() {
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      <ScrollView 
-        contentContainerStyle={styles.scrollContainer} 
+      <ScrollView
+        contentContainerStyle={styles.scrollContainer}
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.container}>
           <Text style={styles.title}>Skin Analysis</Text>
-          <Text style={styles.subtitle}>Upload a clear photo of your skin for analysis</Text>
+          <Text style={styles.subtitle}>
+            Upload a clear photo of your skin for analysis
+          </Text>
 
           <View style={styles.imageContainer}>
             {image ? (
               <>
                 <Image source={{ uri: image }} style={styles.imagePreview} />
-                <TouchableOpacity 
-                  style={styles.removeImageBtn} 
+                <TouchableOpacity
+                  style={styles.removeImageBtn}
                   onPress={() => {
                     setImage(null);
                     setFirebaseUrl(null);
@@ -144,27 +150,39 @@ export default function ScanningScreen() {
               <View style={styles.placeholderContainer}>
                 <Ionicons name="image-outline" size={50} color="#a0a0a0" />
                 <Text style={styles.placeholderText}>No image selected</Text>
-                <Text style={styles.placeholderSubtext}>Take or upload a photo to begin</Text>
+                <Text style={styles.placeholderSubtext}>
+                  Take or upload a photo to begin
+                </Text>
               </View>
             )}
           </View>
 
           <View style={styles.buttonContainer}>
-            <TouchableOpacity 
-              style={styles.button} 
+            <TouchableOpacity
+              style={styles.button}
               onPress={takePicture}
               activeOpacity={0.7}
             >
-              <Ionicons name="camera" size={22} color="white" style={styles.buttonIcon} />
+              <Ionicons
+                name="camera"
+                size={22}
+                color="white"
+                style={styles.buttonIcon}
+              />
               <Text style={styles.buttonText}>Take Photo</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity 
-              style={[styles.button, styles.secondaryButton]} 
+            <TouchableOpacity
+              style={[styles.button, styles.secondaryButton]}
               onPress={pickImage}
               activeOpacity={0.7}
             >
-              <Ionicons name="images" size={22} color="white" style={styles.buttonIcon} />
+              <Ionicons
+                name="images"
+                size={22}
+                color="white"
+                style={styles.buttonIcon}
+              />
               <Text style={styles.buttonText}>Gallery</Text>
             </TouchableOpacity>
           </View>
@@ -193,7 +211,12 @@ export default function ScanningScreen() {
                   </>
                 ) : (
                   <>
-                    <Ionicons name="scan-outline" size={24} color="white" style={styles.buttonIcon} />
+                    <Ionicons
+                      name="scan-outline"
+                      size={24}
+                      color="white"
+                      style={styles.buttonIcon}
+                    />
                     <Text style={styles.analyzeButtonText}>Analyze Skin</Text>
                   </>
                 )}
@@ -204,40 +227,51 @@ export default function ScanningScreen() {
           {prediction && (
             <View style={styles.predictionContainer}>
               <View style={styles.predictionHeader}>
-                <Ionicons 
-                  name={prediction.error ? "alert-circle" : "checkmark-circle"} 
-                  size={24} 
-                  color={prediction.error ? "#e74c3c" : "#34A853"} 
+                <Ionicons
+                  name={prediction.error ? "alert-circle" : "checkmark-circle"}
+                  size={24}
+                  color={prediction.error ? "#e74c3c" : "#34A853"}
                 />
                 <Text style={styles.predictionTitle}>Results</Text>
               </View>
-              
+
               {prediction.error ? (
                 <View style={styles.errorContainer}>
                   <Text style={styles.errorText}>{prediction.error}</Text>
-                  <TouchableOpacity 
+                  <TouchableOpacity
                     style={styles.retryButton}
                     onPress={analyzeSkin}
                   >
                     <Text style={styles.retryButtonText}>Try Again</Text>
                   </TouchableOpacity>
                 </View>
-              ) : prediction.prediction ? (
+              ) : prediction.success && prediction.data ? (
                 <View style={styles.resultContainer}>
-                  <Text style={styles.predictionText}>
-                    Your skin type is:
+                  <Text style={styles.predictionText}>Analysis Result:</Text>
+                  <Text style={styles.skinType}>
+                    {prediction.data.skinType}
                   </Text>
-                  <Text style={styles.skinType}>{prediction.prediction.skinType}</Text>
-                  
-                  <View style={styles.tipContainer}>
-                    <Text style={styles.tipTitle}>Skin Care Tips:</Text>
-                    <Text style={styles.tipText}>
-                      Based on your skin type, we recommend a gentle cleanser and moisturizer.
-                    </Text>
-                  </View>
+                  <Text style={styles.confidenceText}>
+                    {prediction.data.result}
+                  </Text>
+
+                  {prediction.data.recommendedProducts &&
+                    prediction.data.recommendedProducts.length > 0 && (
+                      <View style={styles.tipContainer}>
+                        <Text style={styles.tipTitle}>
+                          Recommended Products:
+                        </Text>
+                        <Text style={styles.tipText}>
+                          {prediction.data.recommendedProducts.length} products
+                          recommended for your skin type.
+                        </Text>
+                      </View>
+                    )}
                 </View>
               ) : (
-                <Text style={styles.predictionText}>No prediction data available</Text>
+                <Text style={styles.predictionText}>
+                  No prediction data available
+                </Text>
               )}
             </View>
           )}
@@ -430,6 +464,13 @@ const styles = StyleSheet.create({
     textTransform: "capitalize",
     marginVertical: 12,
     textAlign: "center",
+  },
+  confidenceText: {
+    fontSize: 14,
+    color: "#666",
+    textAlign: "center",
+    marginTop: 8,
+    fontStyle: "italic",
   },
   tipContainer: {
     backgroundColor: "#f0f7f0",
