@@ -39,9 +39,8 @@ export default function LoginScreen() {
         console.log("Login successful, token stored");
         console.log("User:", response.data.user.fullName);
 
-        Alert.alert("Thành công", `Chào mừng ${response.data.user.fullName}!`, [
-          { text: "OK", onPress: () => router.push("/(tabs)") },
-        ]);
+        // Navigate to main app immediately after successful login
+        router.replace("/(tabs)");
       } else {
         Alert.alert("Lỗi", response.message || "Đăng nhập thất bại");
       }

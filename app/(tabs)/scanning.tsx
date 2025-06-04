@@ -1,3 +1,4 @@
+import Face3DModel from "@/components/Face3DModel";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import * as ImagePicker from "expo-image-picker";
 import { StatusBar } from "expo-status-bar";
@@ -25,6 +26,8 @@ export default function ScanningScreen() {
   const [firebaseUrl, setFirebaseUrl] = useState<string | null>(null);
   const [prediction, setPrediction] = useState<AnalysisResult | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
+  const [selectedFaceArea, setSelectedFaceArea] = useState<string | null>(null);
+  const [showModel, setShowModel] = useState<boolean>(true);
 
   useEffect(() => {
     (async () => {
@@ -119,6 +122,27 @@ export default function ScanningScreen() {
     }
   };
 
+  const handleFaceAreaSelected = (point: {
+    x: number;
+    y: number;
+    z: number;
+    area: string;
+  }) => {
+    setSelectedFaceArea(point.area);
+    console.log("Selected face area:", point);
+  };
+
+  const proceedToImageCapture = () => {
+    if (!selectedFaceArea) {
+      Alert.alert(
+        "Chưa chọn vùng",
+        "Vui lòng chọn vùng da cần phân tích trước"
+      );
+      return;
+    }
+    setShowModel(false);
+  };
+
   return (
     <SafeAreaView style={styles.safeArea}>
       <ScrollView
@@ -128,152 +152,210 @@ export default function ScanningScreen() {
         <View style={styles.container}>
           <Text style={styles.title}>Skin Analysis</Text>
           <Text style={styles.subtitle}>
-            Upload a clear photo of your skin for analysis
+            {showModel
+              ? "Chọn vùng da cần phân tích"
+              : "Upload a clear photo of your skin for analysis"}
           </Text>
 
-          <View style={styles.imageContainer}>
-            {image ? (
-              <>
-                <Image source={{ uri: image }} style={styles.imagePreview} />
+          {showModel ? (
+            <View style={styles.modelContainer}>
+              <Face3DModel onPointSelected={handleFaceAreaSelected} />
+
+              {selectedFaceArea && (
                 <TouchableOpacity
-                  style={styles.removeImageBtn}
-                  onPress={() => {
-                    setImage(null);
-                    setFirebaseUrl(null);
-                    setPrediction(null);
-                  }}
+                  style={styles.proceedButton}
+                  onPress={proceedToImageCapture}
+                  activeOpacity={0.8}
                 >
-                  <Ionicons name="close-circle" size={28} color="#fff" />
+                  <Text style={styles.proceedButtonText}>
+                    Tiếp tục với vùng {selectedFaceArea}
+                  </Text>
                 </TouchableOpacity>
-              </>
-            ) : (
-              <View style={styles.placeholderContainer}>
-                <Ionicons name="image-outline" size={50} color="#a0a0a0" />
-                <Text style={styles.placeholderText}>No image selected</Text>
-                <Text style={styles.placeholderSubtext}>
-                  Take or upload a photo to begin
-                </Text>
-              </View>
-            )}
-          </View>
+              )}
 
-          <View style={styles.buttonContainer}>
-            <TouchableOpacity
-              style={styles.button}
-              onPress={takePicture}
-              activeOpacity={0.7}
-            >
-              <Ionicons
-                name="camera"
-                size={22}
-                color="white"
-                style={styles.buttonIcon}
-              />
-              <Text style={styles.buttonText}>Take Photo</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[styles.button, styles.secondaryButton]}
-              onPress={pickImage}
-              activeOpacity={0.7}
-            >
-              <Ionicons
-                name="images"
-                size={22}
-                color="white"
-                style={styles.buttonIcon}
-              />
-              <Text style={styles.buttonText}>Gallery</Text>
-            </TouchableOpacity>
-          </View>
-
-          {uploading ? (
-            <View style={styles.loadingContainer}>
-              <ActivityIndicator size="large" color="#4285F4" />
-              <Text style={styles.loadingText}>Uploading image...</Text>
+              <TouchableOpacity
+                style={styles.skipModelButton}
+                onPress={() => setShowModel(false)}
+              >
+                <Text style={styles.skipModelButtonText}>Bỏ qua chọn vùng</Text>
+              </TouchableOpacity>
             </View>
           ) : (
-            firebaseUrl && (
-              <TouchableOpacity
-                style={[styles.analyzeButton, loading && styles.disabledButton]}
-                onPress={analyzeSkin}
-                disabled={loading}
-                activeOpacity={0.8}
-              >
-                {loading ? (
+            <>
+              <View style={styles.imageContainer}>
+                {image ? (
                   <>
-                    <ActivityIndicator
-                      size="small"
-                      color="#fff"
-                      style={styles.buttonLoader}
+                    <Image
+                      source={{ uri: image }}
+                      style={styles.imagePreview}
                     />
-                    <Text style={styles.analyzeButtonText}>Analyzing...</Text>
+                    <TouchableOpacity
+                      style={styles.removeImageBtn}
+                      onPress={() => {
+                        setImage(null);
+                        setFirebaseUrl(null);
+                        setPrediction(null);
+                      }}
+                    >
+                      <Ionicons name="close-circle" size={28} color="#fff" />
+                    </TouchableOpacity>
                   </>
                 ) : (
-                  <>
-                    <Ionicons
-                      name="scan-outline"
-                      size={24}
-                      color="white"
-                      style={styles.buttonIcon}
-                    />
-                    <Text style={styles.analyzeButtonText}>Analyze Skin</Text>
-                  </>
+                  <View style={styles.placeholderContainer}>
+                    <Ionicons name="image-outline" size={50} color="#a0a0a0" />
+                    <Text style={styles.placeholderText}>
+                      No image selected
+                    </Text>
+                    <Text style={styles.placeholderSubtext}>
+                      Take or upload a photo to begin
+                    </Text>
+                  </View>
                 )}
-              </TouchableOpacity>
-            )
-          )}
-
-          {prediction && (
-            <View style={styles.predictionContainer}>
-              <View style={styles.predictionHeader}>
-                <Ionicons
-                  name={prediction.error ? "alert-circle" : "checkmark-circle"}
-                  size={24}
-                  color={prediction.error ? "#e74c3c" : "#34A853"}
-                />
-                <Text style={styles.predictionTitle}>Results</Text>
               </View>
 
-              {prediction.error ? (
-                <View style={styles.errorContainer}>
-                  <Text style={styles.errorText}>{prediction.error}</Text>
-                  <TouchableOpacity
-                    style={styles.retryButton}
-                    onPress={analyzeSkin}
-                  >
-                    <Text style={styles.retryButtonText}>Try Again</Text>
-                  </TouchableOpacity>
-                </View>
-              ) : prediction.success && prediction.data ? (
-                <View style={styles.resultContainer}>
-                  <Text style={styles.predictionText}>Analysis Result:</Text>
-                  <Text style={styles.skinType}>
-                    {prediction.data.skinType}
-                  </Text>
-                  <Text style={styles.confidenceText}>
-                    {prediction.data.result}
-                  </Text>
+              <View style={styles.buttonContainer}>
+                <TouchableOpacity
+                  style={styles.button}
+                  onPress={takePicture}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons
+                    name="camera"
+                    size={22}
+                    color="white"
+                    style={styles.buttonIcon}
+                  />
+                  <Text style={styles.buttonText}>Take Photo</Text>
+                </TouchableOpacity>
 
-                  {prediction.data.recommendedProducts &&
-                    prediction.data.recommendedProducts.length > 0 && (
-                      <View style={styles.tipContainer}>
-                        <Text style={styles.tipTitle}>
-                          Recommended Products:
-                        </Text>
-                        <Text style={styles.tipText}>
-                          {prediction.data.recommendedProducts.length} products
-                          recommended for your skin type.
-                        </Text>
-                      </View>
-                    )}
+                <TouchableOpacity
+                  style={[styles.button, styles.secondaryButton]}
+                  onPress={pickImage}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons
+                    name="images"
+                    size={22}
+                    color="white"
+                    style={styles.buttonIcon}
+                  />
+                  <Text style={styles.buttonText}>Gallery</Text>
+                </TouchableOpacity>
+              </View>
+
+              {uploading ? (
+                <View style={styles.loadingContainer}>
+                  <ActivityIndicator size="large" color="#4285F4" />
+                  <Text style={styles.loadingText}>Uploading image...</Text>
                 </View>
               ) : (
-                <Text style={styles.predictionText}>
-                  No prediction data available
-                </Text>
+                firebaseUrl && (
+                  <TouchableOpacity
+                    style={[
+                      styles.analyzeButton,
+                      loading && styles.disabledButton,
+                    ]}
+                    onPress={analyzeSkin}
+                    disabled={loading}
+                    activeOpacity={0.8}
+                  >
+                    {loading ? (
+                      <>
+                        <ActivityIndicator
+                          size="small"
+                          color="#fff"
+                          style={styles.buttonLoader}
+                        />
+                        <Text style={styles.analyzeButtonText}>
+                          Analyzing...
+                        </Text>
+                      </>
+                    ) : (
+                      <>
+                        <Ionicons
+                          name="scan-outline"
+                          size={24}
+                          color="white"
+                          style={styles.buttonIcon}
+                        />
+                        <Text style={styles.analyzeButtonText}>
+                          Analyze Skin
+                        </Text>
+                      </>
+                    )}
+                  </TouchableOpacity>
+                )
               )}
-            </View>
+
+              {selectedFaceArea && (
+                <View style={styles.selectedAreaInfo}>
+                  <Text style={styles.selectedAreaText}>
+                    Đang phân tích vùng: {selectedFaceArea}
+                  </Text>
+                  <TouchableOpacity
+                    style={styles.changeAreaButton}
+                    onPress={() => setShowModel(true)}
+                  >
+                    <Text style={styles.changeAreaButtonText}>Đổi vùng</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+
+              {prediction && (
+                <View style={styles.predictionContainer}>
+                  <View style={styles.predictionHeader}>
+                    <Ionicons
+                      name={
+                        prediction.error ? "alert-circle" : "checkmark-circle"
+                      }
+                      size={24}
+                      color={prediction.error ? "#e74c3c" : "#34A853"}
+                    />
+                    <Text style={styles.predictionTitle}>Results</Text>
+                  </View>
+
+                  {prediction.error ? (
+                    <View style={styles.errorContainer}>
+                      <Text style={styles.errorText}>{prediction.error}</Text>
+                      <TouchableOpacity
+                        style={styles.retryButton}
+                        onPress={analyzeSkin}
+                      >
+                        <Text style={styles.retryButtonText}>Try Again</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : (
+                    prediction.success &&
+                    prediction.data && (
+                      <View style={styles.resultContainer}>
+                        <Text style={styles.predictionText}>
+                          Analysis Result:
+                        </Text>
+                        <Text style={styles.skinType}>
+                          {prediction.data.skinType}
+                        </Text>
+                        <Text style={styles.confidenceText}>
+                          {prediction.data.result}
+                        </Text>
+
+                        {prediction.data.recommendedProducts &&
+                          prediction.data.recommendedProducts.length > 0 && (
+                            <View style={styles.tipContainer}>
+                              <Text style={styles.tipTitle}>
+                                Recommended Products:
+                              </Text>
+                              <Text style={styles.tipText}>
+                                {prediction.data.recommendedProducts.length}{" "}
+                                products recommended for your skin type.
+                              </Text>
+                            </View>
+                          )}
+                      </View>
+                    )
+                  )}
+                </View>
+              )}
+            </>
           )}
         </View>
       </ScrollView>
@@ -510,5 +592,55 @@ const styles = StyleSheet.create({
   retryButtonText: {
     color: "white",
     fontWeight: "bold",
+  },
+  modelContainer: {
+    width: "100%",
+    marginBottom: 24,
+  },
+  proceedButton: {
+    backgroundColor: "#00A86B",
+    padding: 16,
+    borderRadius: 12,
+    alignItems: "center",
+    marginTop: 16,
+  },
+  proceedButtonText: {
+    color: "#FFFFFF",
+    fontSize: 16,
+    fontWeight: "600",
+  },
+  skipModelButton: {
+    padding: 12,
+    alignItems: "center",
+    marginTop: 8,
+  },
+  skipModelButtonText: {
+    color: "#666",
+    fontSize: 14,
+  },
+  selectedAreaInfo: {
+    backgroundColor: "#E8F5E8",
+    padding: 12,
+    borderRadius: 8,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 16,
+  },
+  selectedAreaText: {
+    color: "#00A86B",
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  changeAreaButton: {
+    backgroundColor: "#00A86B",
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 6,
+  },
+  changeAreaButtonText: {
+    color: "#FFFFFF",
+    fontSize: 12,
+    fontWeight: "600",
   },
 });
