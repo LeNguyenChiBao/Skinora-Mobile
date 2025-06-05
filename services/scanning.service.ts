@@ -6,6 +6,9 @@ import { authService } from "./authServices.service";
 
 export interface ProductRecommendation {
   recommendationId: string;
+  productName: string;
+  brand: string;
+  price: number;
   productId: string;
   reason: string;
   _id: string;

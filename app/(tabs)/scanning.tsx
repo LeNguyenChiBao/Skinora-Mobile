@@ -1,4 +1,3 @@
-import Face3DModel from "@/components/Face3DModel";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import * as ImagePicker from "expo-image-picker";
 import { StatusBar } from "expo-status-bar";
@@ -7,6 +6,7 @@ import {
   ActivityIndicator,
   Alert,
   Image,
+  Modal,
   SafeAreaView,
   ScrollView,
   StyleSheet,
@@ -28,6 +28,7 @@ export default function ScanningScreen() {
   const [loading, setLoading] = useState<boolean>(false);
   const [selectedFaceArea, setSelectedFaceArea] = useState<string | null>(null);
   const [showModel, setShowModel] = useState<boolean>(true);
+  const [showProductModal, setShowProductModal] = useState<boolean>(false);
 
   useEffect(() => {
     (async () => {
@@ -112,11 +113,23 @@ export default function ScanningScreen() {
       // Send the local image directly - don't use the Firebase URL
       const result = await analyzeImage(image);
       console.log("Prediction result:", result);
+
+      // Add console.log to see recommended products
+      if (result.data?.recommendedProducts) {
+        console.log(
+          "prediction.data.recommendedProducts.length:",
+          result.data.recommendedProducts.length
+        );
+        console.log(
+          "prediction.data.recommendedProducts:",
+          result.data.recommendedProducts
+        );
+      }
+
       setPrediction(result);
     } catch (error) {
       console.error("Prediction failed:", error);
       Alert.alert("Error", "Skin analysis failed. Please try again.");
-      setPrediction({ error: "Analysis failed. Please try again." });
     } finally {
       setLoading(false);
     }
@@ -156,209 +169,276 @@ export default function ScanningScreen() {
               ? "Chọn vùng da cần phân tích"
               : "Upload a clear photo of your skin for analysis"}
           </Text>
-
-          {showModel ? (
-            <View style={styles.modelContainer}>
-              <Face3DModel onPointSelected={handleFaceAreaSelected} />
-
-              {selectedFaceArea && (
-                <TouchableOpacity
-                  style={styles.proceedButton}
-                  onPress={proceedToImageCapture}
-                  activeOpacity={0.8}
-                >
-                  <Text style={styles.proceedButtonText}>
-                    Tiếp tục với vùng {selectedFaceArea}
+          <>
+            <View style={styles.imageContainer}>
+              {image ? (
+                <>
+                  <Image source={{ uri: image }} style={styles.imagePreview} />
+                  <TouchableOpacity
+                    style={styles.removeImageBtn}
+                    onPress={() => {
+                      setImage(null);
+                      setFirebaseUrl(null);
+                      setPrediction(null);
+                    }}
+                  >
+                    <Ionicons name="close-circle" size={28} color="#fff" />
+                  </TouchableOpacity>
+                </>
+              ) : (
+                <View style={styles.placeholderContainer}>
+                  <Ionicons name="image-outline" size={50} color="#a0a0a0" />
+                  <Text style={styles.placeholderText}>No image selected</Text>
+                  <Text style={styles.placeholderSubtext}>
+                    Take or upload a photo to begin
                   </Text>
-                </TouchableOpacity>
+                </View>
               )}
+            </View>
+
+            <View style={styles.buttonContainer}>
+              <TouchableOpacity
+                style={styles.button}
+                onPress={takePicture}
+                activeOpacity={0.7}
+              >
+                <Ionicons
+                  name="camera"
+                  size={22}
+                  color="white"
+                  style={styles.buttonIcon}
+                />
+                <Text style={styles.buttonText}>Take Photo</Text>
+              </TouchableOpacity>
 
               <TouchableOpacity
-                style={styles.skipModelButton}
-                onPress={() => setShowModel(false)}
+                style={[styles.button, styles.secondaryButton]}
+                onPress={pickImage}
+                activeOpacity={0.7}
               >
-                <Text style={styles.skipModelButtonText}>Bỏ qua chọn vùng</Text>
+                <Ionicons
+                  name="images"
+                  size={22}
+                  color="white"
+                  style={styles.buttonIcon}
+                />
+                <Text style={styles.buttonText}>Gallery</Text>
               </TouchableOpacity>
             </View>
-          ) : (
-            <>
-              <View style={styles.imageContainer}>
-                {image ? (
-                  <>
-                    <Image
-                      source={{ uri: image }}
-                      style={styles.imagePreview}
-                    />
-                    <TouchableOpacity
-                      style={styles.removeImageBtn}
-                      onPress={() => {
-                        setImage(null);
-                        setFirebaseUrl(null);
-                        setPrediction(null);
-                      }}
-                    >
-                      <Ionicons name="close-circle" size={28} color="#fff" />
-                    </TouchableOpacity>
-                  </>
-                ) : (
-                  <View style={styles.placeholderContainer}>
-                    <Ionicons name="image-outline" size={50} color="#a0a0a0" />
-                    <Text style={styles.placeholderText}>
-                      No image selected
-                    </Text>
-                    <Text style={styles.placeholderSubtext}>
-                      Take or upload a photo to begin
-                    </Text>
-                  </View>
-                )}
+
+            {uploading ? (
+              <View style={styles.loadingContainer}>
+                <ActivityIndicator size="large" color="#4285F4" />
+                <Text style={styles.loadingText}>Uploading image...</Text>
               </View>
-
-              <View style={styles.buttonContainer}>
+            ) : (
+              firebaseUrl && (
                 <TouchableOpacity
-                  style={styles.button}
-                  onPress={takePicture}
-                  activeOpacity={0.7}
+                  style={[
+                    styles.analyzeButton,
+                    loading && styles.disabledButton,
+                  ]}
+                  onPress={analyzeSkin}
+                  disabled={loading}
+                  activeOpacity={0.8}
                 >
-                  <Ionicons
-                    name="camera"
-                    size={22}
-                    color="white"
-                    style={styles.buttonIcon}
-                  />
-                  <Text style={styles.buttonText}>Take Photo</Text>
+                  {loading ? (
+                    <>
+                      <ActivityIndicator
+                        size="small"
+                        color="#fff"
+                        style={styles.buttonLoader}
+                      />
+                      <Text style={styles.analyzeButtonText}>Analyzing...</Text>
+                    </>
+                  ) : (
+                    <>
+                      <Ionicons
+                        name="scan-outline"
+                        size={24}
+                        color="white"
+                        style={styles.buttonIcon}
+                      />
+                      <Text style={styles.analyzeButtonText}>Analyze Skin</Text>
+                    </>
+                  )}
                 </TouchableOpacity>
+              )
+            )}
 
+            {selectedFaceArea && (
+              <View style={styles.selectedAreaInfo}>
+                <Text style={styles.selectedAreaText}>
+                  Đang phân tích vùng: {selectedFaceArea}
+                </Text>
                 <TouchableOpacity
-                  style={[styles.button, styles.secondaryButton]}
-                  onPress={pickImage}
-                  activeOpacity={0.7}
+                  style={styles.changeAreaButton}
+                  onPress={() => setShowModel(true)}
                 >
-                  <Ionicons
-                    name="images"
-                    size={22}
-                    color="white"
-                    style={styles.buttonIcon}
-                  />
-                  <Text style={styles.buttonText}>Gallery</Text>
+                  <Text style={styles.changeAreaButtonText}>Đổi vùng</Text>
                 </TouchableOpacity>
               </View>
+            )}
 
-              {uploading ? (
-                <View style={styles.loadingContainer}>
-                  <ActivityIndicator size="large" color="#4285F4" />
-                  <Text style={styles.loadingText}>Uploading image...</Text>
+            {prediction && (
+              <View style={styles.predictionContainer}>
+                <View style={styles.predictionHeader}>
+                  <Ionicons
+                    name={
+                      prediction.error ? "alert-circle" : "checkmark-circle"
+                    }
+                    size={24}
+                    color={prediction.error ? "#e74c3c" : "#34A853"}
+                  />
+                  <Text style={styles.predictionTitle}>Results</Text>
                 </View>
-              ) : (
-                firebaseUrl && (
-                  <TouchableOpacity
-                    style={[
-                      styles.analyzeButton,
-                      loading && styles.disabledButton,
-                    ]}
-                    onPress={analyzeSkin}
-                    disabled={loading}
-                    activeOpacity={0.8}
-                  >
-                    {loading ? (
-                      <>
-                        <ActivityIndicator
-                          size="small"
-                          color="#fff"
-                          style={styles.buttonLoader}
-                        />
-                        <Text style={styles.analyzeButtonText}>
-                          Analyzing...
-                        </Text>
-                      </>
-                    ) : (
-                      <>
+
+                {prediction.error ? (
+                  <View style={styles.errorContainer}>
+                    <Text style={styles.errorText}>{prediction.error}</Text>
+                    <TouchableOpacity
+                      style={styles.retryButton}
+                      onPress={analyzeSkin}
+                    >
+                      <Text style={styles.retryButtonText}>Try Again</Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : (
+                  prediction.success &&
+                  prediction.data && (
+                    <View style={styles.resultContainer}>
+                      <Text style={styles.predictionText}>
+                        Analysis Result:
+                      </Text>
+                      <Text style={styles.skinType}>
+                        {prediction.data.skinType}
+                      </Text>
+                      <Text style={styles.confidenceText}>
+                        {prediction.data.result}
+                      </Text>
+
+                      <TouchableOpacity
+                        style={styles.viewResultButton}
+                        onPress={() => setShowProductModal(true)}
+                      >
                         <Ionicons
-                          name="scan-outline"
-                          size={24}
-                          color="white"
+                          name="eye-outline"
+                          size={20}
+                          color="#00A86B"
                           style={styles.buttonIcon}
                         />
-                        <Text style={styles.analyzeButtonText}>
-                          Analyze Skin
+                        <Text style={styles.viewResultButtonText}>
+                          Xem chi tiết kết quả
                         </Text>
-                      </>
-                    )}
-                  </TouchableOpacity>
-                )
-              )}
-
-              {selectedFaceArea && (
-                <View style={styles.selectedAreaInfo}>
-                  <Text style={styles.selectedAreaText}>
-                    Đang phân tích vùng: {selectedFaceArea}
-                  </Text>
-                  <TouchableOpacity
-                    style={styles.changeAreaButton}
-                    onPress={() => setShowModel(true)}
-                  >
-                    <Text style={styles.changeAreaButtonText}>Đổi vùng</Text>
-                  </TouchableOpacity>
-                </View>
-              )}
-
-              {prediction && (
-                <View style={styles.predictionContainer}>
-                  <View style={styles.predictionHeader}>
-                    <Ionicons
-                      name={
-                        prediction.error ? "alert-circle" : "checkmark-circle"
-                      }
-                      size={24}
-                      color={prediction.error ? "#e74c3c" : "#34A853"}
-                    />
-                    <Text style={styles.predictionTitle}>Results</Text>
-                  </View>
-
-                  {prediction.error ? (
-                    <View style={styles.errorContainer}>
-                      <Text style={styles.errorText}>{prediction.error}</Text>
-                      <TouchableOpacity
-                        style={styles.retryButton}
-                        onPress={analyzeSkin}
-                      >
-                        <Text style={styles.retryButtonText}>Try Again</Text>
                       </TouchableOpacity>
                     </View>
-                  ) : (
-                    prediction.success &&
-                    prediction.data && (
-                      <View style={styles.resultContainer}>
-                        <Text style={styles.predictionText}>
-                          Analysis Result:
-                        </Text>
-                        <Text style={styles.skinType}>
-                          {prediction.data.skinType}
-                        </Text>
-                        <Text style={styles.confidenceText}>
-                          {prediction.data.result}
-                        </Text>
-
-                        {prediction.data.recommendedProducts &&
-                          prediction.data.recommendedProducts.length > 0 && (
-                            <View style={styles.tipContainer}>
-                              <Text style={styles.tipTitle}>
-                                Recommended Products:
-                              </Text>
-                              <Text style={styles.tipText}>
-                                {prediction.data.recommendedProducts.length}{" "}
-                                products recommended for your skin type.
-                              </Text>
-                            </View>
-                          )}
-                      </View>
-                    )
-                  )}
-                </View>
-              )}
-            </>
-          )}
+                  )
+                )}
+              </View>
+            )}
+          </>
         </View>
       </ScrollView>
+
+      {/* Analysis Result Modal */}
+      <Modal
+        visible={showProductModal}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setShowProductModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContainer}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Kết quả phân tích</Text>
+              <TouchableOpacity
+                style={styles.closeButton}
+                onPress={() => setShowProductModal(false)}
+              >
+                <Ionicons name="close" size={24} color="#666" />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={styles.modalContent}>
+              {/* Analysis Result Section */}
+              {prediction?.data && (
+                <View style={styles.analysisResultSection}>
+                  <View style={styles.resultHeader}>
+                    <Ionicons name="scan-outline" size={24} color="#00A86B" />
+                    <Text style={styles.sectionTitle}>
+                      Kết quả phân tích da
+                    </Text>
+                  </View>
+
+                  <View style={styles.resultCard}>
+                    <Text style={styles.skinTypeLabel}>Loại da:</Text>
+                    <Text style={styles.skinTypeValue}>
+                      {prediction.data.skinType}
+                    </Text>
+                    <Text style={styles.resultDescription}>
+                      {prediction.data.result}
+                    </Text>
+                  </View>
+                </View>
+              )}
+
+              {/* Recommended Products Section */}
+              {prediction?.data?.recommendedProducts &&
+                prediction.data.recommendedProducts.length > 0 && (
+                  <View style={styles.productsSection}>
+                    <View style={styles.resultHeader}>
+                      <Ionicons name="bag-outline" size={24} color="#00A86B" />
+                      <Text style={styles.sectionTitle}>
+                        Sản phẩm được đề xuất (
+                        {prediction.data.recommendedProducts.length})
+                      </Text>
+                    </View>
+
+                    {prediction.data.recommendedProducts.map(
+                      (product, index) => (
+                        <View key={index} style={styles.productItem}>
+                          <View style={styles.productInfo}>
+                            <Text style={styles.productName}>
+                              {product.productId?.productName ||
+                                `Sản phẩm ${index + 1}`}
+                            </Text>
+                            <Text style={styles.productBrand}>
+                              {product.productId?.brand}
+                            </Text>
+                            <Text style={styles.productDescription}>
+                              {product.reason || "Phù hợp với loại da của bạn"}
+                            </Text>
+                            {product.productId?.price && (
+                              <Text style={styles.productPrice}>
+                                {new Intl.NumberFormat("vi-VN", {
+                                  style: "currency",
+                                  currency: "VND",
+                                }).format(product.productId.price)}
+                              </Text>
+                            )}
+                          </View>
+                          <TouchableOpacity style={styles.viewProductButton}>
+                            <Text style={styles.viewProductButtonText}>
+                              Xem
+                            </Text>
+                          </TouchableOpacity>
+                        </View>
+                      )
+                    )}
+                  </View>
+                )}
+            </ScrollView>
+
+            <TouchableOpacity
+              style={styles.closeModalButton}
+              onPress={() => setShowProductModal(false)}
+            >
+              <Text style={styles.closeModalButtonText}>Đóng</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
       <StatusBar style="auto" />
     </SafeAreaView>
   );
@@ -371,6 +451,7 @@ const styles = StyleSheet.create({
   },
   scrollContainer: {
     flexGrow: 1,
+    paddingBottom: 100, // Add padding to avoid tab bar overlap
   },
   container: {
     flex: 1,
@@ -642,5 +723,173 @@ const styles = StyleSheet.create({
     color: "#FFFFFF",
     fontSize: 12,
     fontWeight: "600",
+  },
+  productButton: {
+    backgroundColor: "#E8F5E8",
+    padding: 16,
+    borderRadius: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 20,
+    width: "100%",
+    borderWidth: 1,
+    borderColor: "#00A86B",
+  },
+  productButtonText: {
+    color: "#00A86B",
+    fontSize: 16,
+    fontWeight: "600",
+    marginLeft: 8,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0, 0, 0, 0.5)",
+    justifyContent: "center", // Change from flex-end to center
+    paddingHorizontal: 20,
+    paddingVertical: 40,
+  },
+  modalContainer: {
+    backgroundColor: "#fff",
+    borderRadius: 20,
+    maxHeight: "90%", // Increase max height
+    flex: 1,
+    paddingTop: 20,
+  },
+  modalHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingHorizontal: 20,
+    paddingBottom: 15,
+    borderBottomWidth: 1,
+    borderBottomColor: "#f0f0f0",
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: "bold",
+    color: "#333",
+    flex: 1, // Allow title to take available space
+  },
+  closeButton: {
+    padding: 5,
+    marginLeft: 10,
+  },
+  modalContent: {
+    flex: 1,
+    paddingHorizontal: 20,
+    paddingTop: 15,
+    paddingBottom: 10, // Add bottom padding
+  },
+  productItem: {
+    flexDirection: "row",
+    backgroundColor: "#f8f9fa",
+    padding: 16,
+    borderRadius: 12,
+    marginBottom: 12,
+    alignItems: "center",
+  },
+  productInfo: {
+    flex: 1,
+  },
+  productName: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#333",
+    marginBottom: 4,
+  },
+  productBrand: {
+    fontSize: 12,
+    color: "#00A86B",
+    fontWeight: "500",
+    marginBottom: 4,
+  },
+  productDescription: {
+    fontSize: 14,
+    color: "#666",
+    marginBottom: 4,
+  },
+  productPrice: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#00A86B",
+  },
+  viewProductButton: {
+    backgroundColor: "#00A86B",
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  viewProductButtonText: {
+    color: "#fff",
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  closeModalButton: {
+    backgroundColor: "#00A86B",
+    marginHorizontal: 20,
+    marginVertical: 15, // Reduce margin
+    padding: 16,
+    borderRadius: 12,
+    alignItems: "center",
+  },
+  closeModalButtonText: {
+    color: "#fff",
+    fontSize: 16,
+    fontWeight: "600",
+  },
+  viewResultButton: {
+    backgroundColor: "#E8F5E8",
+    padding: 16,
+    borderRadius: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 20,
+    marginBottom: 30, // Add bottom margin to avoid tab bar
+    width: "100%",
+    borderWidth: 1,
+    borderColor: "#00A86B",
+  },
+  analysisResultSection: {
+    marginBottom: 24,
+  },
+  productsSection: {
+    marginBottom: 16,
+  },
+  resultHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 16,
+  },
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: "bold",
+    color: "#333",
+    marginLeft: 8,
+  },
+  resultCard: {
+    backgroundColor: "#f8f9fa",
+    padding: 20,
+    borderRadius: 12,
+    borderLeftWidth: 4,
+    borderLeftColor: "#00A86B",
+  },
+  skinTypeLabel: {
+    fontSize: 14,
+    color: "#666",
+    marginBottom: 4,
+  },
+  skinTypeValue: {
+    fontSize: 24,
+    fontWeight: "bold",
+    color: "#00A86B",
+    marginBottom: 12,
+    textTransform: "capitalize",
+  },
+  resultDescription: {
+    fontSize: 16,
+    color: "#333",
+    lineHeight: 24,
   },
 });
