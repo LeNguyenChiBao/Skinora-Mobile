@@ -1,7 +1,10 @@
 import React from 'react'
+import { Text, View } from 'react-native'
 
 export default function AppointmentScreen() {
   return (
-    <div>AppointmentScreen</div>
+    <View>
+      <Text>AppointmentScreen</Text>
+    </View>
   )
 }
