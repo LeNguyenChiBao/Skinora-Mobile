@@ -29,6 +29,21 @@ interface LoginResponse {
   message?: string;
 }
 
+interface RegisterRequest {
+  email: string;
+  password: string;
+  fullName: string;
+  phone: string;
+  dob: string;
+  address: string;
+  avatarUrl: string;
+}
+
+interface RegisterResponse {
+  message: string;
+  user: User;
+}
+
 class AuthService {
   private api: AxiosInstance;
   private readonly TOKEN_KEY = "auth_token";
@@ -36,7 +51,7 @@ class AuthService {
 
   constructor() {
     const baseURL =
-      process.env.EXPO_PUBLIC_API_BASE_URL || "http://10.0.0.100:3000";
+      process.env.EXPO_PUBLIC_API_BASE_URL;
 
     this.api = axios.create({
       baseURL,
@@ -113,6 +128,42 @@ class AuthService {
         };
       } else if (error.request) {
         // Network error
+        return {
+          success: false,
+          message: "Lỗi kết nối đến máy chủ. Kiểm tra kết nối mạng.",
+        };
+      } else {
+        return {
+          success: false,
+          message: "Có lỗi xảy ra. Vui lòng thử lại.",
+        };
+      }
+    }
+  }
+
+  async register(data: RegisterRequest): Promise<{ success: boolean; data?: RegisterResponse; message?: string }> {
+    try {
+      const response = await this.api.post("/auth/register", data);
+      return {
+        success: true,
+        data: response.data,
+      };
+    } catch (error: any) {
+      console.error("Register error:", error);
+
+      if (error.code === "ECONNABORTED") {
+        return {
+          success: false,
+          message: "Kết nối quá lâu. Vui lòng thử lại.",
+        };
+      }
+
+      if (error.response) {
+        return {
+          success: false,
+          message: error.response.data?.message || "Đăng ký thất bại",
+        };
+      } else if (error.request) {
         return {
           success: false,
           message: "Lỗi kết nối đến máy chủ. Kiểm tra kết nối mạng.",
@@ -208,4 +259,5 @@ class AuthService {
 }
 
 export const authService = new AuthService();
-export type { LoginRequest, LoginResponse, User };
+export type { LoginRequest, LoginResponse, RegisterRequest, RegisterResponse, User };
+

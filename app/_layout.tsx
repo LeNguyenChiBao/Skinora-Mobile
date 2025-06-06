@@ -48,9 +48,7 @@ export default function RootLayout() {
           }}
           initialRouteName={isLoggedIn ? "(tabs)" : "welcome"}
         >
-          <Stack.Screen name="welcome" options={{ headerShown: false }} />
-          <Stack.Screen name="login" options={{ headerShown: false }} />
-          <Stack.Screen name="signup" options={{ headerShown: false }} />
+          <Stack.Screen name="(stacks)" options={{ headerShown: false }} />
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
           <Stack.Screen name="+not-found" />
         </Stack>
