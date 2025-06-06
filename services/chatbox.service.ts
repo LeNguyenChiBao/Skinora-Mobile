@@ -48,7 +48,7 @@ export interface SendMessageResponse {
 
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL || 'http://192.168.1.35:3000'
 const GEMINI_API_KEY = process.env.EXPO_PUBLIC_GEMINI_API_KEY
-const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent';
+const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent';
 
 export const fetchUserChatHistory = async (userId: string): Promise<ChatHistoryResponse | { error: string }> => {
   try {
