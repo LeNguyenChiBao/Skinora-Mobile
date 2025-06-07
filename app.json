@@ -4,15 +4,17 @@
     "slug": "skinora",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
+    "icon": "./assets/images/Skinora.png",
     "userInterfaceStyle": "light",
     "splash": {
-      "image": "./assets/splash.png",
+      "image": "./assets/images/Skinora.png",
       "resizeMode": "contain",
       "backgroundColor": "#ffffff"
     },
     "linking": {
-      "prefixes": ["skinora://"],
+      "prefixes": [
+        "skinora://"
+      ],
       "config": {
         "screens": {
           "PaymentSuccess": "payment/success",
@@ -22,20 +24,31 @@
         }
       }
     },
-    "assetBundlePatterns": ["**/*"],
+    "assetBundlePatterns": [
+      "**/*"
+    ],
     "ios": {
       "supportsTablet": true
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
+        "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "usesCleartextTraffic": true
+      "usesCleartextTraffic": true,
+      "package": "com.nhatlong11.skinora"
     },
     "web": {
-      "favicon": "./assets/favicon.png"
+      "favicon": "./assets/images/favicon.png"
     },
-    "plugins": ["expo-asset", "expo-web-browser"]
+    "plugins": [
+      "expo-asset",
+      "expo-web-browser"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "1cae8b03-bb4b-4016-9fe5-7b79addee489"
+      }
+    }
   }
 }

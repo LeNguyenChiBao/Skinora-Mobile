@@ -48,3 +48,56 @@ Join our community of developers creating universal apps.
 
 - [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
 - [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+
+# Skinora Mobile App
+
+## Video Call Setup
+
+To enable real video calling, you need to install react-native-agora:
+
+### Installation Steps:
+
+1. Install the package:
+
+   ```bash
+   npm install react-native-agora
+   ```
+
+2. For React Native >= 0.60 (auto-linking):
+
+   ```bash
+   npx react-native run-android
+   ```
+
+3. For older versions:
+
+   ```bash
+   npx react-native link react-native-agora
+   ```
+
+4. Add permissions to `android/app/src/main/AndroidManifest.xml`:
+
+   ```xml
+   <uses-permission android:name="android.permission.RECORD_AUDIO" />
+   <uses-permission android:name="android.permission.CAMERA" />
+   <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+   <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+   <uses-permission android:name="android.permission.INTERNET" />
+   ```
+
+### Demo Mode
+
+If Agora SDK is not available, the app will automatically run in demo mode with:
+
+- Simulated video call interface
+- Working controls (mute, camera, etc.)
+- Call timer and status updates
+- Visual placeholders for video streams
+
+### Troubleshooting
+
+If you see "RtcEngine not found", try:
+
+1. Clean and rebuild: `npx react-native clean && npx react-native run-android`
+2. Check if the package is properly linked
+3. Ensure you're not running on Expo Go (native build required)

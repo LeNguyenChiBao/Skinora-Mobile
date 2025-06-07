@@ -1,7 +1,7 @@
 import { usePayment } from "@/hooks/usePayment";
 import { paymentService } from "@/services/payment.service";
 import { subscriptionService } from "@/services/subscription.service";
-import { userService } from "@/services/userService";
+import { userService } from "@/services/user.service";
 import type { SubscriptionPlan } from "@/types/subscription";
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";

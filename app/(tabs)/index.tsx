@@ -43,27 +43,27 @@ export default function HomeScreen() {
     },
     {
       id: "doctors",
-      title: "Connect with Doctors",
+      title: "Bác sĩ da liễu",
       description: "Kết nối với bác sĩ chuyên khoa",
       icon: "medical",
       color: "#34A853",
+      route: "/(stacks)/doctors-list",
+    },
+    {
+      id: "appointment",
+      title: "Đặt lịch hẹn",
+      description: "Đặt lịch khám với bác sĩ",
+      icon: "calendar",
+      color: "#FBBC04",
       route: "/appointment",
     },
     {
-      id: "products",
-      title: "Health Products",
-      description: "Tìm kiếm sản phẩm chăm sóc da",
-      icon: "basket",
-      color: "#FBBC04",
-      route: "/products",
-    },
-    {
-      id: "blogs",
-      title: "Blogs",
-      description: "Tin tức và bài viết sức khỏe",
-      icon: "library",
-      color: "#EA4335",
-      route: "/blogs",
+      id: "subscription",
+      title: "Gói đăng ký",
+      description: "Nâng cấp tài khoản Premium",
+      icon: "diamond",
+      color: "#9C27B0",
+      route: "/(stacks)/subscription",
     },
   ];
 
@@ -102,7 +102,7 @@ export default function HomeScreen() {
             <Ionicons name="notifications-outline" size={24} color="#00A86L" />
           </TouchableOpacity>
           <TouchableOpacity style={styles.settingButton}>
-            <Feather name="settings" size={24} color="#00A86L" />
+            <Feather name="settings" size={24} color="#00A86B" />
           </TouchableOpacity>
         </View>
 
