@@ -44,6 +44,22 @@ interface RegisterResponse {
   user: User;
 }
 
+interface UpdateUserRequest {
+  fullName?: string;
+  phone?: string;
+  address?: string;
+  avatarUrl?: string;
+}
+
+interface UpdateUserResponse {
+  success: boolean;
+  data?: {
+    message: string;
+    user: User;
+  };
+  message?: string;
+}
+
 class AuthService {
   private api: AxiosInstance;
   private readonly TOKEN_KEY = "auth_token";
@@ -177,6 +193,83 @@ class AuthService {
     }
   }
 
+  async updateUser(userId: string, data: UpdateUserRequest): Promise<UpdateUserResponse> {
+    try {
+      const token = await this.getToken();
+      if (!token) {
+        return {
+          success: false,
+          message: "Không tìm thấy token xác thực",
+        };
+      }
+
+      const response = await this.api.patch(`/users/${userId}`, data, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      // Check if response has user data (response.data is the user object directly)
+      if (response.data && response.data._id) {
+        // Map the response to match User interface
+        const updatedUser: User = {
+          id: response.data._id,
+          email: response.data.email,
+          fullName: response.data.fullName,
+          phone: response.data.phone,
+          address: response.data.address,
+          dob: response.data.dob,
+          avatarUrl: response.data.avatarUrl,
+          role: response.data.role,
+          isActive: response.data.isActive,
+          isVerified: response.data.isVerified,
+        };
+
+        await this.storeUserData(updatedUser);
+        
+        return {
+          success: true,
+          data: {
+            message: "Cập nhật thành công",
+            user: updatedUser,
+          },
+        };
+      } else {
+        console.error("No user data in response:", response.data);
+        return {
+          success: false,
+          message: "Không nhận được dữ liệu người dùng từ server",
+        };
+      }
+    } catch (error: any) {
+      console.error("Update user error:", error);
+
+      if (error.code === "ECONNABORTED") {
+        return {
+          success: false,
+          message: "Kết nối quá lâu. Vui lòng thử lại.",
+        };
+      }
+
+      if (error.response) {
+        return {
+          success: false,
+          message: error.response.data?.message || "Cập nhật thông tin thất bại",
+        };
+      } else if (error.request) {
+        return {
+          success: false,
+          message: "Lỗi kết nối đến máy chủ. Kiểm tra kết nối mạng.",
+        };
+      } else {
+        return {
+          success: false,
+          message: "Có lỗi xảy ra. Vui lòng thử lại.",
+        };
+      }
+    }
+  }
+
   async logout(): Promise<boolean> {
     try {
       // Clear stored tokens and user data
@@ -220,6 +313,10 @@ class AuthService {
   // User data management methods
   async storeUserData(user: User): Promise<void> {
     try {
+      if (!user) {
+        console.error("Cannot store null/undefined user data");
+        throw new Error("User data is null or undefined");
+      }
       await AsyncStorage.setItem(this.USER_KEY, JSON.stringify(user));
     } catch (error) {
       console.error("Error storing user data:", error);
@@ -259,5 +356,5 @@ class AuthService {
 }
 
 export const authService = new AuthService();
-export type { LoginRequest, LoginResponse, RegisterRequest, RegisterResponse, User };
+export type { LoginRequest, LoginResponse, RegisterRequest, RegisterResponse, UpdateUserRequest, UpdateUserResponse, User };
 
