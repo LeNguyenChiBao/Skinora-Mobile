@@ -57,7 +57,7 @@ export default function CustomTabBar({
             color={iconColor}
           />
         );
-      case "personal":
+      case "profile":
         return (
           <Ionicons
             name={focused ? "person" : "person-outline"}
@@ -80,7 +80,7 @@ export default function CustomTabBar({
         return "Quét da";
       case "appointment":
         return "Lịch hẹn";
-      case "personal":
+      case "profile":
         return "Cá nhân";
       default:
         return "";
