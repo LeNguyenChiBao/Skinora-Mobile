@@ -35,7 +35,7 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
-        name="schedule"
+        name="personal"
         options={{
           title: "Cá nhân",
         }}

@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "Skinora-Mobile",
-    "slug": "skinora-mobile",
+    "name": "Skinora",
+    "slug": "skinora",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -11,9 +11,18 @@
       "resizeMode": "contain",
       "backgroundColor": "#ffffff"
     },
-    "assetBundlePatterns": [
-      "**/*"
-    ],
+    "linking": {
+      "prefixes": ["skinora://"],
+      "config": {
+        "screens": {
+          "PaymentSuccess": "payment/success",
+          "PaymentCancel": "payment/cancel",
+          "(stacks)/payment-success": "payment/success",
+          "(stacks)/payment-cancel": "payment/cancel"
+        }
+      }
+    },
+    "assetBundlePatterns": ["**/*"],
     "ios": {
       "supportsTablet": true
     },
@@ -27,8 +36,6 @@
     "web": {
       "favicon": "./assets/favicon.png"
     },
-    "plugins": [
-      "expo-asset"
-    ]
+    "plugins": ["expo-asset", "expo-web-browser"]
   }
 }

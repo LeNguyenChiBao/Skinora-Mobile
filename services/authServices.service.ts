@@ -17,6 +17,7 @@ interface User {
   role: string;
   isActive: boolean;
   isVerified: boolean;
+  currentSubscription?: string;
 }
 
 interface LoginResponse {
@@ -50,8 +51,7 @@ class AuthService {
   private readonly USER_KEY = "user_data";
 
   constructor() {
-    const baseURL =
-      process.env.EXPO_PUBLIC_API_BASE_URL;
+    const baseURL = process.env.EXPO_PUBLIC_API_BASE_URL;
 
     this.api = axios.create({
       baseURL,
@@ -141,7 +141,9 @@ class AuthService {
     }
   }
 
-  async register(data: RegisterRequest): Promise<{ success: boolean; data?: RegisterResponse; message?: string }> {
+  async register(
+    data: RegisterRequest
+  ): Promise<{ success: boolean; data?: RegisterResponse; message?: string }> {
     try {
       const response = await this.api.post("/auth/register", data);
       return {
@@ -259,5 +261,10 @@ class AuthService {
 }
 
 export const authService = new AuthService();
-export type { LoginRequest, LoginResponse, RegisterRequest, RegisterResponse, User };
-
+export type {
+  LoginRequest,
+  LoginResponse,
+  RegisterRequest,
+  RegisterResponse,
+  User,
+};
