@@ -42,7 +42,7 @@ export default function StackLayout() {
       <Stack.Screen name="skin-analysis" options={{ headerShown: false }} />
       <Stack.Screen name="my-appointments" options={{ headerShown: false }} />
       <Stack.Screen name="book-appointment" options={{ headerShown: false }} />
-      <Stack.Screen name="doctor-detail" options={{ headerShown: false }} />
+      <Stack.Screen name="doctor-detail" options={{ headerShown: true }} />
       <Stack.Screen name="doctor-chat" options={{ headerShown: false }} />
       <Stack.Screen name="video-call" options={{ headerShown: false }} />
     </Stack>
