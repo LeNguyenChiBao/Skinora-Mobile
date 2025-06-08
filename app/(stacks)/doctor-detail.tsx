@@ -240,6 +240,22 @@ export default function DoctorDetailScreen() {
     return timeSlots.join(" • ");
   };
 
+  const handleChatPress = () => {
+    if (!doctor) {
+      Alert.alert("Lỗi", "Không tìm thấy thông tin bác sĩ");
+      return;
+    }
+
+    // Navigate to doctor chat screen
+    router.push({
+      pathname: "/(stacks)/doctor-chat",
+      params: {
+        doctorId: doctor._id,
+        doctorName: doctor.fullName,
+      },
+    });
+  };
+
   if (loading) {
     return (
       <>
@@ -438,7 +454,7 @@ export default function DoctorDetailScreen() {
 
         {/* Bottom Actions */}
         <View style={styles.bottomActions}>
-          <TouchableOpacity style={styles.chatButton}>
+          <TouchableOpacity style={styles.chatButton} onPress={handleChatPress}>
             <Ionicons name="chatbubble" size={20} color="#FFFFFF" />
             <Text style={styles.chatButtonText}>Nhắn tin</Text>
           </TouchableOpacity>
