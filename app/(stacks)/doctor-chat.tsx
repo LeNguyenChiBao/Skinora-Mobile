@@ -162,6 +162,10 @@ export default function DoctorChatScreen() {
         "Không thể kết nối đến chat. Sử dụng chế độ ngoại tuyến."
       );
       setIsOfflineMode(true);
+      // Start polling even if initialization partially failed
+      if (room) {
+        setTimeout(() => startPolling(), 1000);
+      }
     } finally {
       setIsLoading(false);
     }
@@ -359,16 +363,56 @@ export default function DoctorChatScreen() {
       console.log("📨 Formatted messages:", uiMessages.length, "messages");
 
       if (page === 1) {
-        // For page 1, replace all messages to ensure we get the latest
-        console.log("📨 Replacing all messages with fresh data");
-        setMessages(uiMessages);
+        // For page 1, merge messages intelligently instead of replacing all
+        setMessages((prev) => {
+          // Create a map of existing messages by ID for fast lookup
+          const existingMessagesMap = new Map(
+            prev.map((msg) => [msg._id, msg])
+          );
+
+          // Start with existing messages
+          const mergedMessages = [...prev];
+          let hasNewMessages = false;
+
+          // Add only truly new messages from the server
+          uiMessages.forEach((newMsg) => {
+            if (!existingMessagesMap.has(newMsg._id)) {
+              mergedMessages.push(newMsg);
+              hasNewMessages = true;
+              console.log(
+                "📨 Found new message:",
+                newMsg._id,
+                newMsg.text?.substring(0, 50)
+              );
+            }
+          });
+
+          if (hasNewMessages) {
+            // Sort by creation time to maintain proper order
+            const sortedMessages = mergedMessages.sort(
+              (a, b) =>
+                new Date(a.createdAt).getTime() -
+                new Date(b.createdAt).getTime()
+            );
+            console.log(
+              "📨 Added",
+              uiMessages.length - prev.length,
+              "new messages, total:",
+              sortedMessages.length
+            );
+            return sortedMessages;
+          } else {
+            console.log("📨 No new messages found");
+            return prev;
+          }
+        });
       } else {
         console.log("📨 Prepending older messages");
         setMessages((prev) => [...uiMessages, ...prev]);
       }
 
       // Scroll to bottom for new messages (only for first page)
-      if (page === 1 && uiMessages.length > 0) {
+      if (page === 1) {
         setTimeout(() => {
           flatListRef.current?.scrollToEnd({ animated: true });
         }, 100);
@@ -434,12 +478,14 @@ export default function DoctorChatScreen() {
   };
 
   const handleMessageReceived = (message: ChatMessage) => {
-    console.log("📨 Handling received message:", {
+    console.log("📨 Handling received message via WebSocket:", {
       messageId: message._id,
       roomId: message.roomId,
       currentRoomId: room?._id,
       senderId: message.senderId,
       currentUserId,
+      messageType: message.messageType,
+      content: message.content?.substring(0, 50),
     });
 
     if (room && message.roomId === room._id) {
@@ -448,10 +494,15 @@ export default function DoctorChatScreen() {
         // Check if message already exists to avoid duplicates
         const exists = prev.some((msg) => msg._id === message._id);
         if (!exists) {
-          console.log("📨 Adding received message to list");
-          return [...prev, uiMessage];
+          console.log("📨 Adding received WebSocket message to list");
+          // Add new message and sort to maintain order
+          const newMessages = [...prev, uiMessage].sort(
+            (a, b) =>
+              new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+          );
+          return newMessages;
         } else {
-          console.log("📨 Message already exists, skipping");
+          console.log("📨 WebSocket message already exists, skipping");
           return prev;
         }
       });
@@ -463,11 +514,11 @@ export default function DoctorChatScreen() {
 
       // Mark as read if not own message
       if (message.senderId !== currentUserId) {
-        console.log("✅ Marking message as read (not own message)");
+        console.log("✅ Marking WebSocket message as read (not own message)");
         chatService.markAsRead(room._id);
       }
     } else {
-      console.log("⚠️ Message ignored: wrong room or no room set");
+      console.log("⚠️ WebSocket message ignored: wrong room or no room set");
     }
   };
 
@@ -536,9 +587,11 @@ export default function DoctorChatScreen() {
       try {
         console.log("📨 Polling for new messages...");
         await loadMessages(room._id, 1);
-        pollTimeoutRef.current = setTimeout(poll, 3000);
+        // Poll every 2 seconds for more responsive updates
+        pollTimeoutRef.current = setTimeout(poll, 2000);
       } catch (error) {
         console.error("❌ Polling error:", error);
+        // Retry after longer delay on error
         pollTimeoutRef.current = setTimeout(poll, 5000);
       }
     };
