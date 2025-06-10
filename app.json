@@ -12,9 +12,7 @@
       "backgroundColor": "#ffffff"
     },
     "linking": {
-      "prefixes": [
-        "skinora://"
-      ],
+      "prefixes": ["skinora://"],
       "config": {
         "screens": {
           "PaymentSuccess": "payment/success",
@@ -24,9 +22,7 @@
         }
       }
     },
-    "assetBundlePatterns": [
-      "**/*"
-    ],
+    "assetBundlePatterns": ["**/*"],
     "ios": {
       "supportsTablet": true
     },
@@ -43,7 +39,14 @@
     },
     "plugins": [
       "expo-asset",
-      "expo-web-browser"
+      "expo-web-browser",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Ứng dụng cần quyền truy cập thư viện ảnh để gửi hình ảnh.",
+          "cameraPermission": "Ứng dụng cần quyền truy cập camera để chụp ảnh."
+        }
+      ]
     ],
     "extra": {
       "eas": {

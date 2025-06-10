@@ -37,20 +37,23 @@ export interface Message {
       }
     | string
     | null;
-  senderType: "patient" | "doctor";
-  content: string;
+  senderType?: "patient" | "doctor";
+  messageText?: string; // Updated field name from backend
+  content?: string; // Keep as fallback
   messageType: "text" | "image" | "file" | "audio" | "video";
   attachments?: string[];
   timestamp?: string;
-  createdAt: string;
-  updatedAt: string;
-  isRead: boolean;
-  isDeleted: boolean;
+  createdAt: string; // Keep as string from backend
+  updatedAt?: string; // Make optional and string
+  isRead?: boolean; // Make optional
+  readAt?: string;
+  isDeleted?: boolean;
   imageUrl?: string;
   fileUrl?: string;
   fileName?: string;
   senderName?: string;
   isEdited?: boolean;
+  __v?: number; // Add MongoDB version field
 }
 
 interface CreateRoomRequest {
@@ -84,11 +87,34 @@ interface ChatEventHandlers {
     isTyping: boolean;
   }) => void;
   onUserOnlineStatus?: (data: { userId: string; isOnline: boolean }) => void;
-  onRoomUpdated?: (room: any) => void; // Updated to handle room stats
+  onRoomUpdated?: (room: any) => void;
   onRoomJoined?: (data: {
     roomId: string;
     userId: string;
     roomMemberCount?: number;
+  }) => void;
+  // Add seen message event handlers
+  onMessagesMarkedSeen?: (data: {
+    roomId: string;
+    messageIds: string[];
+    userId: string;
+  }) => void;
+  onUserSeenMessages?: (data: {
+    roomId: string;
+    seenBy: string;
+    messageIds: string[];
+    seenAt: string;
+  }) => void;
+  onMessagesSeenSync?: (data: {
+    roomId: string;
+    messageIds: string[];
+    seenBy: string;
+  }) => void;
+  onUserViewingChat?: (data: {
+    roomId: string;
+    userId: string;
+    isViewing: boolean;
+    userName?: string;
   }) => void;
   onError?: (error: any) => void;
   onConnected?: () => void;
@@ -102,8 +128,11 @@ class ChatService {
   private eventHandlers: ChatEventHandlers = {};
   private reconnectAttempts = 0;
   private maxReconnectAttempts = 5;
-  private connectionState = false; // Rename to avoid conflict with method
+  private connectionState = false;
   private pendingRoomId: string | null = null;
+  private processedMessages = new Set<string>();
+  private lastMessageProcessTime = new Map<string, number>(); // Add debouncing map
+  private messageProcessingTimeout: NodeJS.Timeout | null = null;
 
   constructor(baseURL: string) {
     this.baseURL = baseURL;
@@ -199,6 +228,7 @@ class ChatService {
       message: result.message,
       dataType: typeof result.data,
       dataLength: Array.isArray(result.data) ? result.data.length : "not array",
+      hasPagination: !!(result as any).pagination,
       data: result.data,
     });
 
@@ -207,6 +237,8 @@ class ChatService {
       throw new Error(result.message || "API request failed");
     }
 
+    // Return result.data directly for the new format
+    // The caller will handle pagination separately if needed
     return result.data;
   }
 
@@ -300,7 +332,11 @@ class ChatService {
 
   async sendMessage(
     roomId: string,
-    data: SendMessageRequest
+    data: SendMessageRequest & {
+      imageUrl?: string;
+      fileUrl?: string;
+      fileName?: string;
+    }
   ): Promise<Message> {
     console.log("💬 Sending message to room:", roomId, "with data:", data);
 
@@ -309,6 +345,9 @@ class ChatService {
       content: data.content,
       messageType: data.messageType,
       attachments: data.attachments || [],
+      // Backend only accepts fileUrl, not imageUrl
+      ...(data.fileUrl && { fileUrl: data.fileUrl }),
+      ...(data.fileName && { fileName: data.fileName }),
     };
 
     console.log("💬 Backend formatted data:", backendData);
@@ -324,6 +363,9 @@ class ChatService {
       messageId: result._id,
       content: result.content,
       messageType: result.messageType,
+      attachments: result.attachments,
+      imageUrl: result.imageUrl,
+      fileUrl: result.fileUrl,
       senderId: result.senderId,
       createdAt: result.createdAt,
     });
@@ -332,20 +374,36 @@ class ChatService {
 
   // Update the sendMessageToDoctor to use HTTP API (as backend expects)
   async sendMessageToDoctor(roomId: string, content: string): Promise<Message> {
-    console.log("💬 Sending message via HTTP API (BE suggested approach)");
+    console.log("💬 Sending message via HTTP API (Backend suggested approach)");
+    console.log("💬 Message content:", content.substring(0, 50));
+    console.log("💬 Room ID:", roomId);
 
-    // Use the exact endpoint format the backend expects
+    // Use the exact format the backend expects
+    const messageData = {
+      content: content.trim(),
+      messageType: "text",
+    };
+
+    console.log("💬 Sending with data:", messageData);
+
     const result = await this.apiRequest<Message>(
       `/chat/rooms/${roomId}/messages`,
       {
         method: "POST",
-        body: JSON.stringify({ content }),
+        body: JSON.stringify(messageData),
       }
     );
 
-    console.log(
-      "✅ Message sent via HTTP API - WebSocket events will handle UI update"
-    );
+    console.log("✅ Message sent via HTTP API:", {
+      messageId: result._id,
+      chatRoomId: result.chatRoomId,
+      messageText: result.messageText || result.content,
+      messageType: result.messageType,
+      senderId: result.senderId,
+      timestamp: result.timestamp || result.createdAt,
+    });
+    console.log("📡 WebSocket events should handle UI update automatically");
+
     return result;
   }
 
@@ -360,51 +418,51 @@ class ChatService {
       const endpoint = `/chat/rooms/${roomId}/messages`;
       const response = await this.apiRequest<any>(endpoint);
 
-      // Handle different response formats
+      console.log("📨 [DEBUG] Raw API response type:", typeof response);
+      console.log(
+        "📨 [DEBUG] Raw API response keys:",
+        Object.keys(response || {})
+      );
+      console.log("📨 [DEBUG] Is array:", Array.isArray(response));
+      console.log(
+        "📨 [DEBUG] Raw API response:",
+        JSON.stringify(response, null, 2)
+      );
+
       let messages: Message[] = [];
       let pagination: any = null;
 
-      if (Array.isArray(response)) {
+      if (response && Array.isArray(response)) {
         messages = response;
         pagination = {
           page,
           limit,
           total: response.length,
-          hasNext: response.length === limit,
-          hasPrev: page > 1,
+          hasMore: response.length === limit,
         };
-      } else if (response && response.messages) {
-        messages = response.messages;
-        pagination = response.pagination || {
-          page,
-          limit,
-          total: response.messages.length,
-          hasNext: response.messages.length === limit,
-          hasPrev: page > 1,
-        };
-      } else if (response && response.data) {
-        if (Array.isArray(response.data)) {
-          messages = response.data;
-          pagination = {
-            page,
-            limit,
-            total: response.data.length,
-            hasNext: response.data.length === limit,
-            hasPrev: page > 1,
-          };
-        } else if (response.data.messages) {
-          messages = response.data.messages;
-          pagination = response.data.pagination || {
-            page,
-            limit,
-            total: response.data.messages.length,
-            hasNext: response.data.messages.length === limit,
-            hasPrev: page > 1,
-          };
-        }
+        console.log("📨 [DEBUG] Using direct array format");
+      } else {
+        console.warn("⚠️ Unexpected message response format:", response);
+        messages = [];
+        pagination = { page, limit, total: 0, hasMore: false };
       }
 
-      console.log("📨 Messages loaded:", messages.length);
+      console.log("📨 [DEBUG] Final messages array:", {
+        count: messages.length,
+        firstMessage: messages[0]
+          ? {
+              _id: messages[0]._id,
+              messageType: messages[0].messageType,
+              messageText: messages[0].messageText,
+              content: messages[0].content,
+              senderId: messages[0].senderId,
+              createdAt: messages[0].createdAt,
+              fileUrl: messages[0].fileUrl,
+              attachments: messages[0].attachments,
+            }
+          : null,
+      });
+
       return { messages, pagination };
     } catch (error) {
       console.error("❌ Error fetching messages:", error);
@@ -480,13 +538,17 @@ class ChatService {
             console.log("🔌 Socket ID:", this.socket?.id);
             console.log("🔌 Transport:", this.socket?.io.engine.transport.name);
             this.reconnectAttempts = 0;
+            console.log(
+              "🔌 Basic connection established, waiting for authentication..."
+            );
             resolve();
           });
 
           // 2. Handle authenticated connection - AUTO JOIN ROOM HERE
           this.socket.on("connected", (data) => {
-            console.log("✅ Connected to chat server:", data);
+            console.log("✅ Connected to chat server (authenticated):", data);
             this.connectionState = true;
+            console.log("🔌 Calling onConnected handler...");
 
             // AUTO-JOIN ROOM immediately after authentication
             if (this.pendingRoomId) {
@@ -497,7 +559,13 @@ class ChatService {
               this.joinRoomImmediately(this.pendingRoomId);
             }
 
-            this.eventHandlers.onConnected?.();
+            // Call the connected handler
+            if (this.eventHandlers.onConnected) {
+              console.log("🔌 Calling onConnected event handler");
+              this.eventHandlers.onConnected();
+            } else {
+              console.warn("⚠️ No onConnected handler registered!");
+            }
           });
 
           // 3. room_joined - Track room membership and online count
@@ -521,29 +589,16 @@ class ChatService {
             // Update UI if needed
           });
 
-          // 6. new_message - PRIMARY message event
+          // 6. new_message - PRIMARY message event (MAIN EVENT)
           this.socket.on("new_message", (data) => {
-            console.log("📨 NEW MESSAGE EVENT:", data);
-            if (data.message) {
-              console.log("📨 Processing new message via primary event");
-              this.eventHandlers.onMessageReceived?.(data.message);
-            }
+            console.log("📨 NEW MESSAGE (PRIMARY EVENT - Raw data):", data);
+            this.handleIncomingMessage(data, "PRIMARY");
           });
 
-          // 7. message_received - BACKUP message event
+          // 7. message_received - BACKUP message event (BACKUP DELIVERY)
           this.socket.on("message_received", (data) => {
-            console.log("📨 BACKUP MESSAGE EVENT:", data);
-
-            if (data.message) {
-              console.log("📨 Processing message via backup event");
-              this.eventHandlers.onMessageReceived?.(data.message);
-            } else if (data._id && data.content) {
-              // Handle direct message object
-              console.log(
-                "📨 Processing direct message object via backup event"
-              );
-              this.eventHandlers.onMessageReceived?.(data);
-            }
+            console.log("📨 MESSAGE RECEIVED (BACKUP EVENT - Raw data):", data);
+            this.handleIncomingMessage(data, "BACKUP");
           });
 
           // 8. user_typing - Typing indicators
@@ -556,6 +611,37 @@ class ChatService {
               userName: data.userName,
             };
             this.eventHandlers.onUserTyping?.(typingData);
+          });
+
+          // 9. messages_marked_seen - Seen confirmations
+          this.socket.on("messages_marked_seen", (data) => {
+            console.log("✅ Messages marked as seen:", data);
+            this.eventHandlers.onMessagesMarkedSeen?.(data);
+          });
+
+          // 10. user_seen_messages - When others see your messages
+          this.socket.on("user_seen_messages", (data) => {
+            console.log("👁️ Someone saw messages:", data);
+            this.eventHandlers.onUserSeenMessages?.(data);
+          });
+
+          // 11. messages_seen_sync - Cross-device sync for seen status
+          this.socket.on("messages_seen_sync", (data) => {
+            console.log("🔄 Syncing seen status across devices:", data);
+            this.eventHandlers.onMessagesSeenSync?.(data);
+          });
+
+          // 12. user_viewing_chat - Typing and viewing indicators
+          this.socket.on("user_viewing_chat", (data) => {
+            console.log("👁️ User viewing chat:", data);
+            this.eventHandlers.onUserViewingChat?.(data);
+          });
+
+          // 13. auto_mark_seen_trigger - Auto mark seen trigger
+          this.socket.on("auto_mark_seen_trigger", (data) => {
+            console.log("🔄 Auto mark seen trigger:", data);
+            // Automatically mark messages as seen when triggered by server
+            this.markMessagesAsSeen(data.roomId, data.messageIds);
           });
 
           // Error handling
@@ -618,6 +704,9 @@ class ChatService {
       this.socket = null;
       console.log("✅ WebSocket disconnected");
     }
+
+    // Clean up processed messages cache
+    this.clearProcessedMessages();
   }
 
   // Event handler registration
@@ -783,7 +872,19 @@ class ChatService {
       console.log("🔍 WebSocket state: disconnected (no socket)");
       return "disconnected";
     }
-    const state = this.socket.connected ? "connected" : "connecting";
+
+    const isSocketConnected = this.socket.connected;
+    const isAuthenticated = this.connectionState;
+
+    console.log("🔍 WebSocket connection details:", {
+      socketConnected: isSocketConnected,
+      authenticated: isAuthenticated,
+      finalState:
+        isSocketConnected && isAuthenticated ? "connected" : "connecting",
+    });
+
+    const state =
+      isSocketConnected && isAuthenticated ? "connected" : "connecting";
     console.log("🔍 WebSocket state:", state);
     return state;
   }
@@ -1099,9 +1200,320 @@ class ChatService {
       throw error;
     }
   }
+
+  // WebSocket seen message methods
+  markMessagesAsSeen(
+    roomId: string,
+    messageIds: string[] = [],
+    lastSeenMessageId?: string
+  ): void {
+    if (this.socket?.connected) {
+      authService
+        .getUserData()
+        .then((userInfo) => {
+          const seenData = {
+            roomId,
+            userId: userInfo?.id || "unknown",
+            messageIds,
+            lastSeenMessageId,
+          };
+
+          console.log("👁️ Emitting mark_messages_seen:", seenData);
+          this.socket?.emit("mark_messages_seen", seenData);
+        })
+        .catch((error) => {
+          console.warn("⚠️ Could not get user info for marking messages seen");
+        });
+    }
+  }
+
+  userEnteredChat(roomId: string): void {
+    if (this.socket?.connected) {
+      authService
+        .getUserData()
+        .then((userInfo) => {
+          const enterData = {
+            roomId,
+            userId: userInfo?.id || "unknown",
+          };
+
+          console.log("🚪 Emitting user_entered_chat:", enterData);
+          this.socket?.emit("user_entered_chat", enterData);
+        })
+        .catch((error) => {
+          console.warn("⚠️ Could not get user info for user entered chat");
+        });
+    }
+  }
+
+  userLeftChat(roomId: string): void {
+    if (this.socket?.connected) {
+      authService
+        .getUserData()
+        .then((userInfo) => {
+          const leaveData = {
+            roomId,
+            userId: userInfo?.id || "unknown",
+          };
+
+          console.log("🚪 Emitting user_left_chat:", leaveData);
+          this.socket?.emit("user_left_chat", leaveData);
+        })
+        .catch((error) => {
+          console.warn("⚠️ Could not get user info for user left chat");
+        });
+    }
+  }
+
+  setUserViewingChat(roomId: string, isViewing: boolean): void {
+    if (this.socket?.connected) {
+      authService
+        .getUserData()
+        .then((userInfo) => {
+          const viewingData = {
+            roomId,
+            userId: userInfo?.id || "unknown",
+            isViewing,
+            userName: userInfo?.fullName || "User",
+          };
+
+          console.log("👁️ Emitting user_viewing_chat:", viewingData);
+          this.socket?.emit("user_viewing_chat", viewingData);
+        })
+        .catch((error) => {
+          console.warn("⚠️ Could not get user info for viewing chat");
+        });
+    }
+  }
+
+  getMessageSeenStatus(roomId: string, messageIds: string[] = []): void {
+    if (this.socket?.connected) {
+      authService
+        .getUserData()
+        .then((userInfo) => {
+          const statusData = {
+            roomId,
+            userId: userInfo?.id || "unknown",
+            messageIds,
+          };
+
+          console.log("📊 Emitting get_message_seen_status:", statusData);
+          this.socket?.emit("get_message_seen_status", statusData);
+        })
+        .catch((error) => {
+          console.warn("⚠️ Could not get user info for seen status");
+        });
+    }
+  }
+
+  // API call for marking messages as seen
+  async markMessagesAsSeenAPI(
+    roomId: string,
+    messageIds: string[] = []
+  ): Promise<void> {
+    console.log("✅ Marking messages as seen via API:", { roomId, messageIds });
+
+    try {
+      await this.apiRequest(`/chat/rooms/${roomId}/mark-seen`, {
+        method: "POST",
+        body: JSON.stringify({ messageIds }),
+      });
+      console.log("✅ Messages marked as seen via API successfully");
+    } catch (error) {
+      console.error("❌ Error marking messages as seen via API:", error);
+      throw error;
+    }
+  }
+
+  // Centralized message handling method
+  private handleIncomingMessage(
+    data: any,
+    eventType: "PRIMARY" | "BACKUP"
+  ): void {
+    console.log(
+      `📨 ${eventType} event - RAW DATA:`,
+      JSON.stringify(data, null, 2)
+    );
+
+    // Extract message from data
+    let message;
+    if (data.message) {
+      message = data.message;
+      console.log(`📨 ${eventType}: Using wrapped message format`);
+    } else if (data._id && (data.messageText || data.content)) {
+      message = data;
+      console.log(`📨 ${eventType}: Using direct message format`);
+    } else {
+      console.warn(`⚠️ ${eventType} event: unrecognized format`);
+      return;
+    }
+
+    const messageId = message?._id;
+    if (!messageId) {
+      console.warn(`⚠️ ${eventType} event missing message ID`);
+      return;
+    }
+
+    if (this.processedMessages.has(messageId)) {
+      console.log(
+        `🔄 ${eventType} event: Message already processed, skipping:`,
+        messageId
+      );
+      return;
+    }
+
+    const now = Date.now();
+    const lastProcessTime = this.lastMessageProcessTime.get(messageId);
+    if (lastProcessTime && now - lastProcessTime < 1000) {
+      console.log(
+        `🔄 ${eventType} event: Debounced duplicate within 1s, skipping:`,
+        messageId
+      );
+      return;
+    }
+
+    // Fix date fields
+    if (!message.createdAt && message.timestamp) {
+      message.createdAt = message.timestamp;
+      console.log(`📨 ${eventType}: Fixed createdAt from timestamp`);
+    }
+
+    if (!message.createdAt) {
+      message.createdAt = new Date().toISOString();
+      console.log(`📨 ${eventType}: Added missing createdAt field`);
+    }
+
+    // Fix senderId conversion
+    if (typeof message.senderId === "string") {
+      const senderId = message.senderId;
+      console.log(
+        `📨 ${eventType}: Converting string senderId to object:`,
+        senderId
+      );
+
+      authService
+        .getUserData()
+        .then((currentUser) => {
+          if (senderId === currentUser.id) {
+            message.senderId = {
+              _id: senderId,
+              fullName: currentUser.fullName || "Bạn",
+              avatarUrl: currentUser.avatarUrl,
+            };
+          } else {
+            if (
+              senderId.includes("doctor") ||
+              senderId === "684460f8fe31c80c380b343f"
+            ) {
+              message.senderId = {
+                _id: senderId,
+                fullName: "THUG SHAKER DOCTOR",
+                avatarUrl:
+                  "https://static.wikia.nocookie.net/bhlx/images/3/3c/New_JerseyBunny.png/revision/latest/scale-to-width-down/400?cb=20241123062854",
+              };
+            } else {
+              message.senderId = {
+                _id: senderId,
+                fullName: "Unknown User",
+                avatarUrl: undefined,
+              };
+            }
+          }
+
+          console.log(
+            `📨 ${eventType}: Fixed senderId:`,
+            JSON.stringify(message.senderId, null, 2)
+          );
+          this.processFinalMessage(message, eventType, messageId, now);
+        })
+        .catch((error) => {
+          console.warn(`⚠️ ${eventType}: Failed to get user data:`, error);
+          message.senderId = {
+            _id: senderId,
+            fullName: senderId.includes("doctor") ? "Bác sĩ" : "Unknown User",
+            avatarUrl: senderId.includes("doctor")
+              ? "https://images.unsplash.com/photo-1612349317150-e413f6a5b16d?w=100&h=100&fit=crop&crop=face"
+              : undefined,
+          };
+
+          console.log(
+            `📨 ${eventType}: Fallback senderId:`,
+            JSON.stringify(message.senderId, null, 2)
+          );
+          this.processFinalMessage(message, eventType, messageId, now);
+        });
+    } else {
+      this.processFinalMessage(message, eventType, messageId, now);
+    }
+  }
+
+  private processFinalMessage(
+    message: any,
+    eventType: "PRIMARY" | "BACKUP",
+    messageId: string,
+    now: number
+  ): void {
+    console.log(
+      `📨 ${eventType} event - Final message structure:`,
+      JSON.stringify(
+        {
+          messageId: message._id,
+          chatRoomId: message.chatRoomId,
+          messageText: message.messageText,
+          content: message.content,
+          messageType: message.messageType,
+          senderId: message.senderId,
+          timestamp: message.timestamp,
+          createdAt: message.createdAt,
+          fileUrl: message.fileUrl,
+          attachments: message.attachments,
+        },
+        null,
+        2
+      )
+    );
+
+    this.addProcessedMessage(messageId);
+    this.lastMessageProcessTime.set(messageId, now);
+
+    if (this.eventHandlers.onMessageReceived) {
+      console.log(
+        `📨 ${eventType}: Calling onMessageReceived handler with message:`,
+        JSON.stringify(message, null, 2)
+      );
+      this.eventHandlers.onMessageReceived(message);
+    } else {
+      console.warn(`⚠️ ${eventType}: No onMessageReceived handler registered!`);
+    }
+  }
+
+  private addProcessedMessage(messageId: string): void {
+    this.processedMessages.add(messageId);
+    console.log("🔄 Added message to processed cache:", messageId);
+
+    if (this.messageProcessingTimeout) {
+      clearTimeout(this.messageProcessingTimeout);
+    }
+
+    this.messageProcessingTimeout = setTimeout(() => {
+      const oldSize = this.processedMessages.size;
+      this.processedMessages.clear();
+      this.lastMessageProcessTime.clear();
+      console.log("🧹 Cleaned processed messages cache:", oldSize, "-> 0");
+    }, 5 * 60 * 1000);
+  }
+
+  private clearProcessedMessages(): void {
+    this.processedMessages.clear();
+    this.lastMessageProcessTime.clear();
+    if (this.messageProcessingTimeout) {
+      clearTimeout(this.messageProcessingTimeout);
+      this.messageProcessingTimeout = null;
+    }
+    console.log("🧹 Cleared processed messages cache and timestamps");
+  }
 }
 
-// Export singleton instance - Fix the export
 const chatService = new ChatService(
   process.env.EXPO_PUBLIC_API_BASE_URL || "http://192.168.1.4:3000"
 );
