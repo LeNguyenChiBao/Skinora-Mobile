@@ -1,11 +1,8 @@
 import { authService } from "@/services/authServices.service";
 import chatService, {
   ChatEventHandlers,
-  Message as ChatMessage,
   ChatRoom,
-  SendMessageRequest,
 } from "@/services/chat.service";
-import { userService } from "@/services/user.service";
 import { Ionicons } from "@expo/vector-icons";
 import * as DocumentPicker from "expo-document-picker";
 import * as ImagePicker from "expo-image-picker";
@@ -57,18 +54,20 @@ export default function DoctorChatScreen() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState("");
   const [isLoading, setIsLoading] = useState(true);
+  const [isLoadingMessages, setIsLoadingMessages] = useState(false); // Add this
   const [isSending, setIsSending] = useState(false);
   const [isTyping, setIsTyping] = useState(false);
   const [typingUsers, setTypingUsers] = useState<string[]>([]);
   const [room, setRoom] = useState<ChatRoom | null>(null);
+  const [pagination, setPagination] = useState<any>(null); // Add this
   const [isConnected, setIsConnected] = useState(false);
   const [currentUserId, setCurrentUserId] = useState<string>("");
   const [isOfflineMode, setIsOfflineMode] = useState(false);
   const [isUserActive, setIsUserActive] = useState(true);
+  const [onlineCount, setOnlineCount] = useState(0);
 
   const flatListRef = useRef<FlatList>(null);
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const pollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const userActivityTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Initialize chat
@@ -137,35 +136,25 @@ export default function DoctorChatScreen() {
       console.log("🔄 Starting chat initialization...");
       setIsLoading(true);
 
-      // Try WebSocket first, fall back to polling if it fails
-      try {
-        console.log("🔌 Attempting WebSocket connection...");
-        await initializeWebSocket();
-        console.log("✅ WebSocket connection successful");
-      } catch (wsError) {
-        console.log(
-          "❌ WebSocket failed, using offline mode with polling:",
-          wsError
-        );
-        setIsOfflineMode(true);
-        setIsConnected(false);
-      }
+      // Always try WebSocket - no fallback to polling
+      console.log("🔌 Initializing WebSocket connection...");
+      await initializeWebSocket();
+      console.log("✅ WebSocket connection successful");
 
-      // Get or create chat room (works in both modes)
+      // Get or create chat room
       console.log("🏠 Finding or creating chat room...");
       await findOrCreateRoom();
       console.log("✅ Chat initialization complete");
     } catch (error) {
       console.error("❌ Failed to initialize chat:", error);
       Alert.alert(
-        "Lỗi",
-        "Không thể kết nối đến chat. Sử dụng chế độ ngoại tuyến."
+        "Lỗi kết nối",
+        "Không thể kết nối đến chat. Vui lòng kiểm tra kết nối mạng và thử lại.",
+        [
+          { text: "Thử lại", onPress: () => initializeChat() },
+          { text: "Hủy", onPress: () => router.back() },
+        ]
       );
-      setIsOfflineMode(true);
-      // Start polling even if initialization partially failed
-      if (room) {
-        setTimeout(() => startPolling(), 1000);
-      }
     } finally {
       setIsLoading(false);
     }
@@ -173,7 +162,7 @@ export default function DoctorChatScreen() {
 
   const initializeWebSocket = async () => {
     console.log("🔧 Setting up WebSocket event handlers...");
-    // Set up event handlers
+
     const eventHandlers: ChatEventHandlers = {
       onMessageReceived: (message) => {
         console.log("📨 Event: Message received via WebSocket");
@@ -183,40 +172,337 @@ export default function DoctorChatScreen() {
         console.log("✍️ Event: User typing via WebSocket");
         handleUserTyping(data);
       },
+      onRoomJoined: (data) => {
+        console.log("🏠 Event: Room joined successfully via WebSocket");
+        console.log("👥 Room member count:", data.roomMemberCount);
+        setOnlineCount(data.roomMemberCount || 0);
+        handleRoomJoined(data);
+      },
+      onRoomUpdated: (data) => {
+        console.log("📊 Event: Room updated via WebSocket");
+        console.log("🔗 Total connections:", data.totalConnections);
+        console.log("👤 Unique users:", data.uniqueUsers);
+        setOnlineCount(data.totalConnections || data.uniqueUsers || 0);
+      },
       onConnected: () => {
-        console.log("✅ Event: WebSocket connected");
+        console.log("✅ Event: WebSocket connected and authenticated");
         setIsConnected(true);
         setIsOfflineMode(false);
+        // Room auto-join is now handled in the service
       },
       onDisconnected: () => {
         console.log("❌ Event: WebSocket disconnected");
         setIsConnected(false);
-        // Start polling when disconnected
-        if (!isOfflineMode) {
-          console.log("🔄 WebSocket disconnected, starting polling...");
-          setIsOfflineMode(true);
-          startPolling();
-        }
+        setIsOfflineMode(true);
+        setOnlineCount(0);
+
+        setTimeout(() => {
+          if (!chatService.isConnected()) {
+            console.log("⚠️ Still disconnected after timeout");
+          }
+        }, 3000);
       },
       onError: handleError,
     };
 
     chatService.setEventHandlers(eventHandlers);
+    await chatService.connect();
+  };
 
-    // Try to connect with timeout
-    const connectPromise = chatService.connect();
-    const timeoutPromise = new Promise((_, reject) => {
-      setTimeout(() => reject(new Error("WebSocket connection timeout")), 5000);
+  const getCurrentUserId = async (room: ChatRoom): Promise<string> => {
+    console.log("🔍 Determining current user ID from room participants:", {
+      doctorId: room.doctorId?._id || "null",
+      patientId: room.patientId?._id || "null",
+      routeDoctorId: doctorId,
     });
 
-    await Promise.race([connectPromise, timeoutPromise]);
+    // Try to get current user info from authService
+    try {
+      const userInfo = await authService.getUserData();
+      console.log("👤 Current user info from authService:", userInfo);
+
+      if (userInfo?.id) {
+        // Check if current user is the doctor
+        if (room.doctorId && userInfo.id === room.doctorId._id) {
+          console.log("👨‍⚕️ Current user is doctor:", room.doctorId._id);
+          return room.doctorId._id;
+        }
+        // Check if current user is the patient
+        else if (room.patientId && userInfo.id === room.patientId._id) {
+          console.log("👤 Current user is patient:", room.patientId._id);
+          return room.patientId._id;
+        }
+        // Handle case where room.doctorId is null but user might be the doctor
+        else if (!room.doctorId && userInfo.id === doctorId) {
+          console.log(
+            "👨‍⚕️ Current user is doctor (null in room, matched by param):",
+            userInfo.id
+          );
+          return userInfo.id;
+        }
+        // Default: assume current user is the patient if we have patient info
+        else if (room.patientId && room.patientId._id) {
+          console.log("👤 Defaulting to patient ID:", room.patientId._id);
+          return room.patientId._id;
+        }
+      }
+    } catch (error) {
+      console.error("❌ Error getting user info from authService:", error);
+    }
+
+    // Fallback logic with better null handling
+    if (room.doctorId && room.doctorId._id === doctorId) {
+      console.log("👨‍⚕️ Fallback: Current user is doctor:", room.doctorId._id);
+      return room.doctorId._id;
+    } else if (room.patientId && room.patientId._id) {
+      console.log("👤 Fallback: Current user is patient:", room.patientId._id);
+      return room.patientId._id;
+    } else {
+      // Last resort: try to use any available ID
+      const availableId = room.doctorId?._id || room.patientId?._id;
+      if (availableId) {
+        console.log("⚠️ Last resort: Using available ID:", availableId);
+        return availableId;
+      } else {
+        // Very last resort: use route param doctorId if available
+        if (doctorId) {
+          console.log("🆘 Emergency fallback: Using route doctorId:", doctorId);
+          return doctorId as string;
+        }
+
+        throw new Error(
+          "Cannot determine current user ID - no valid IDs available"
+        );
+      }
+    }
+  };
+
+  const convertChatMessageToUIMessage = (chatMessage: any): Message => {
+    // Backend uses different field names - handle the actual API structure
+    const messageId = chatMessage._id;
+    const senderId = chatMessage.senderId?._id || chatMessage.senderId || null;
+    const senderType = chatMessage.senderType; // Backend specific field
+    const content = chatMessage.content;
+    const messageType = chatMessage.messageType;
+    const createdAt = chatMessage.timestamp || chatMessage.createdAt;
+    const senderInfo = chatMessage.senderId; // This might be an object or null
+
+    console.log("🔄 Converting backend message:", {
+      messageId,
+      senderId,
+      senderType,
+      currentUserId,
+      content: content?.substring(0, 30),
+      hasPopulatedSender: !!senderInfo && typeof senderInfo === "object",
+      timestamp: createdAt,
+    });
+
+    // Determine if this is the current user's message
+    let isOwn = false;
+    let displayName = "";
+    let avatar: string | undefined;
+
+    if (senderType === "patient") {
+      // Patient message
+      isOwn = senderId === currentUserId;
+      if (isOwn) {
+        displayName = "Bạn";
+        avatar = undefined;
+      } else {
+        // Another patient (unlikely in this context)
+        displayName = senderInfo?.fullName || "Bệnh nhân";
+        avatar = senderInfo?.avatarUrl;
+      }
+    } else if (senderType === "doctor") {
+      // Doctor message - senderId is often null for doctor messages
+      if (senderId && senderId === currentUserId) {
+        // Current user is doctor and senderId matches
+        isOwn = true;
+        displayName = "Bạn";
+        avatar = undefined;
+      } else {
+        // Message from doctor (when current user is patient) or senderId is null
+        isOwn = false;
+        displayName = (doctorName as string) || "Bác sĩ";
+        avatar =
+          "https://images.unsplash.com/photo-1612349317150-e413f6a5b16d?w=100&h=100&fit=crop&crop=face";
+      }
+    } else {
+      // Fallback - try to determine by senderId
+      isOwn = senderId === currentUserId;
+      if (isOwn) {
+        displayName = "Bạn";
+        avatar = undefined;
+      } else {
+        displayName =
+          senderInfo?.fullName || (doctorName as string) || "Người dùng";
+        avatar =
+          senderInfo?.avatarUrl ||
+          "https://images.unsplash.com/photo-1612349317150-e413f6a5b16d?w=100&h=100&fit=crop&crop=face";
+      }
+    }
+
+    // Extract image/file URLs from attachments array
+    const attachments = chatMessage.attachments || [];
+    let imageUrl = null;
+    let fileUrl = null;
+    let fileName = null;
+
+    if (attachments.length > 0) {
+      if (messageType === "image") {
+        imageUrl = attachments[0];
+      } else if (messageType === "file") {
+        fileUrl = attachments[0];
+        fileName = attachments[0]?.split("/").pop() || "Document";
+      }
+    }
+
+    console.log("🔄 Message conversion result:", {
+      messageId,
+      isOwn,
+      displayName,
+      senderType,
+      hasAvatar: !!avatar,
+      finalText: content?.substring(0, 30),
+    });
+
+    return {
+      _id: messageId,
+      text: content,
+      createdAt: new Date(createdAt),
+      user: {
+        _id: senderId || "unknown",
+        name: displayName,
+        avatar: avatar,
+      },
+      type: messageType === "text" ? "text" : (messageType as any),
+      isOwn,
+      imageUrl: imageUrl,
+      fileUrl: fileUrl,
+      fileName: fileName,
+    };
+  };
+
+  const loadMessages = async (roomId: string, page: number = 1) => {
+    if (!roomId || roomId === "undefined") {
+      console.error("❌ Cannot load messages: Invalid room ID:", roomId);
+      return;
+    }
+
+    try {
+      console.log("📨 Loading messages for room:", roomId, "page:", page);
+      console.log("📨 Current user ID for message conversion:", currentUserId);
+      setIsLoadingMessages(true);
+
+      const { messages: newMessages, pagination } =
+        await chatService.getMessages(roomId, page);
+
+      console.log("📨 Raw messages from API:", newMessages.length, "messages");
+      console.log("📨 Sample message structure:", newMessages[0]);
+
+      // Convert ChatMessages to UI Messages
+      const convertedMessages = newMessages.map(convertChatMessageToUIMessage);
+
+      console.log(
+        "📨 Converted messages:",
+        convertedMessages.length,
+        "messages"
+      );
+      console.log("📨 Sample converted message:", convertedMessages[0]);
+
+      if (page === 1) {
+        setMessages(convertedMessages);
+      } else {
+        setMessages((prev) => [...convertedMessages, ...prev]);
+      }
+
+      setPagination(pagination);
+
+      // Scroll to bottom for first page
+      if (page === 1) {
+        setTimeout(() => {
+          flatListRef.current?.scrollToEnd({ animated: true });
+        }, 100);
+      }
+    } catch (error) {
+      console.error("❌ Failed to load messages:", error);
+
+      if (error.message?.includes("Invalid roomId")) {
+        Alert.alert("Lỗi", "ID phòng chat không hợp lệ. Vui lòng thử lại.");
+      } else {
+        Alert.alert("Lỗi", "Không thể tải tin nhắn. Vui lòng thử lại.");
+      }
+    } finally {
+      setIsLoadingMessages(false);
+    }
   };
 
   const findOrCreateRoom = async () => {
     try {
       console.log("🔍 Looking for existing room or creating new one...");
 
-      // First, try to create room from appointment if appointmentId exists
+      const existingRooms = await chatService.getRooms();
+      let existingRoom = existingRooms.find((room) => {
+        if (appointmentId && room.appointmentId === appointmentId) {
+          return true;
+        }
+        if (room.doctorId && room.doctorId._id === doctorId) {
+          return true;
+        }
+        return false;
+      });
+
+      if (existingRoom) {
+        console.log("✅ Using existing room:", existingRoom._id);
+        setRoom(existingRoom);
+
+        // Get and set currentUserId FIRST
+        const userId = await getCurrentUserId(existingRoom);
+        console.log("🆔 Setting currentUserId:", userId);
+        setCurrentUserId(userId);
+
+        // Load messages immediately - don't wait for currentUserId check
+        console.log(
+          "📨 Loading messages immediately for room:",
+          existingRoom._id
+        );
+        try {
+          const { messages: newMessages, pagination } =
+            await chatService.getMessages(existingRoom._id, 1);
+
+          console.log("📨 Raw messages loaded:", newMessages.length);
+
+          // Convert messages - this will use the currentUserId we just set
+          const convertedMessages = newMessages.map(
+            convertChatMessageToUIMessage
+          );
+          setMessages(convertedMessages);
+          setPagination(pagination);
+
+          // Scroll to bottom
+          setTimeout(() => {
+            flatListRef.current?.scrollToEnd({ animated: true });
+          }, 100);
+        } catch (messageError) {
+          console.error("❌ Failed to load messages:", messageError);
+        }
+
+        // Auto-join room when WebSocket is ready
+        if (isConnected) {
+          chatService.joinRoom(existingRoom._id);
+        } else {
+          // Store for auto-join when connected
+          chatService.autoJoinRoom(existingRoom._id);
+        }
+
+        await chatService.markAsRead(existingRoom._id);
+        return;
+      }
+
+      // Create new room logic...
+      console.log("🏗️ No existing room found, attempting to create new one...");
+
+      // Try creating from appointment first (if appointmentId exists)
       if (appointmentId) {
         try {
           console.log(
@@ -227,279 +513,124 @@ export default function DoctorChatScreen() {
             await chatService.createRoomFromAppointment(
               appointmentId as string
             );
-          console.log("✅ Room created from appointment successfully");
 
-          setRoom(roomFromAppointment);
-          const userId = await getCurrentUserId(roomFromAppointment);
-          setCurrentUserId(userId);
+          if (roomFromAppointment && roomFromAppointment._id) {
+            console.log("✅ Room created from appointment successfully");
+            setRoom(roomFromAppointment);
+            const userId = await getCurrentUserId(roomFromAppointment);
+            setCurrentUserId(userId);
 
-          // Only join room via WebSocket if connected
-          if (isConnected && !isOfflineMode) {
-            console.log("🔌 Joining room via WebSocket...");
-            chatService.joinRoom(roomFromAppointment._id);
-          } else {
-            console.log("📱 Starting polling mode...");
-            // Start polling in offline mode
-            setTimeout(() => startPolling(), 1000);
+            if (isConnected) {
+              chatService.joinRoom(roomFromAppointment._id);
+            } else {
+              chatService.autoJoinRoom(roomFromAppointment._id);
+            }
+
+            await loadMessages(roomFromAppointment._id);
+            await chatService.markAsRead(roomFromAppointment._id);
+            return;
           }
-
-          // Load messages
-          await loadMessages(roomFromAppointment._id);
-
-          // Mark as read
-          await chatService.markAsRead(roomFromAppointment._id);
-          return;
         } catch (appointmentError) {
           console.log(
-            "❌ Failed to create room from appointment, trying other methods:",
-            appointmentError
+            "❌ Failed to create room from appointment:",
+            appointmentError.message
           );
+          // Continue to manual room creation
         }
       }
 
-      // Fallback: try to get existing rooms
-      console.log("📋 Fetching existing rooms...");
-      const rooms = await chatService.getRooms();
-
-      // Find existing room with this doctor
-      let existingRoom = rooms.find(
-        (room) =>
-          room.doctorId._id === doctorId || room.patientId._id === doctorId
-      );
-
-      if (existingRoom) {
-        console.log("✅ Found existing room:", existingRoom._id);
-      } else {
-        console.log("🏗️ No existing room found, creating new one...");
-
-        // Get current user info to determine who is patient/doctor
-        const userInfo = await authService.getUserData();
-        console.log("👤 Current user info for room creation:", userInfo);
-
-        if (!userInfo?.id) {
-          throw new Error("Current user info not found");
-        }
-
-        // Create new room - assume current user is patient, doctorId is the doctor
-        existingRoom = await chatService.createRoom({
-          patientId: userInfo.id,
-          doctorId: doctorId as string,
-          appointmentId: (appointmentId as string) || "",
-        });
-        console.log("✅ New room created:", existingRoom._id);
+      // Manual room creation as fallback
+      console.log("🏗️ Creating room manually...");
+      const userInfo = await authService.getUserData();
+      if (!userInfo?.id) {
+        throw new Error("Current user info not found");
       }
 
-      setRoom(existingRoom);
-      const userId = await getCurrentUserId(existingRoom);
+      const newRoom = await chatService.createRoom({
+        patientId: userInfo.id,
+        doctorId: doctorId as string,
+        appointmentId: (appointmentId as string) || "",
+      });
+
+      if (!newRoom || !newRoom._id) {
+        throw new Error("Failed to create room - invalid response from server");
+      }
+
+      console.log("✅ New room created manually:", newRoom._id);
+      setRoom(newRoom);
+      const userId = await getCurrentUserId(newRoom);
       setCurrentUserId(userId);
 
-      // Only join room via WebSocket if connected
-      if (isConnected && !isOfflineMode) {
-        console.log("🔌 Joining room via WebSocket...");
-        chatService.joinRoom(existingRoom._id);
+      if (isConnected) {
+        chatService.joinRoom(newRoom._id);
       } else {
-        console.log("📱 Starting polling mode...");
-        // Start polling in offline mode
-        setTimeout(() => startPolling(), 1000);
+        chatService.autoJoinRoom(newRoom._id);
       }
 
-      // Load messages
-      await loadMessages(existingRoom._id);
-
-      // Mark as read
-      await chatService.markAsRead(existingRoom._id);
+      await loadMessages(newRoom._id);
+      await chatService.markAsRead(newRoom._id);
     } catch (error) {
       console.error("❌ Failed to find or create room:", error);
-      throw error;
-    }
-  };
 
-  const getCurrentUserId = async (room: ChatRoom): Promise<string> => {
-    console.log("🔍 Determining current user ID from room participants:", {
-      doctorId: room.doctorId._id,
-      patientId: room.patientId._id,
-      routeDoctorId: doctorId,
-    });
-
-    // Try to get current user info from authService
-    try {
-      const userInfo = await authService.getUserData();
-      console.log("👤 Current user info from authService:", userInfo);
-
-      if (userInfo?.id) {
-        if (userInfo.id === room.doctorId._id) {
-          console.log("👨‍⚕️ Current user is doctor:", room.doctorId._id);
-          return room.doctorId._id;
-        } else if (userInfo.id === room.patientId._id) {
-          console.log("👤 Current user is patient:", room.patientId._id);
-          return room.patientId._id;
-        }
-      }
-    } catch (error) {
-      console.error("❌ Error getting user info from authService:", error);
-    }
-
-    // Fallback: assume if doctorId matches the route param, current user is patient
-    if (room.doctorId._id === doctorId) {
-      console.log("👤 Fallback: Current user is patient:", room.patientId._id);
-      return room.patientId._id;
-    } else {
-      console.log("👨‍⚕️ Fallback: Current user is doctor:", room.doctorId._id);
-      return room.doctorId._id;
-    }
-  };
-
-  const loadMessages = async (roomId: string, page: number = 1) => {
-    try {
-      console.log("📨 Loading messages for room:", roomId, "page:", page);
-      const response = await chatService.getMessages(roomId, page);
-
-      // Handle case where response.messages might be undefined or response is just an array
-      const chatMessages = response.messages || response || [];
-
-      // Convert chat messages to UI messages
-      const uiMessages = chatMessages.map(convertChatMessageToUIMessage);
-
-      console.log("📨 Formatted messages:", uiMessages.length, "messages");
-
-      if (page === 1) {
-        // For page 1, merge messages intelligently instead of replacing all
-        setMessages((prev) => {
-          // Create a map of existing messages by ID for fast lookup
-          const existingMessagesMap = new Map(
-            prev.map((msg) => [msg._id, msg])
-          );
-
-          // Start with existing messages
-          const mergedMessages = [...prev];
-          let hasNewMessages = false;
-
-          // Add only truly new messages from the server
-          uiMessages.forEach((newMsg) => {
-            if (!existingMessagesMap.has(newMsg._id)) {
-              mergedMessages.push(newMsg);
-              hasNewMessages = true;
-              console.log(
-                "📨 Found new message:",
-                newMsg._id,
-                newMsg.text?.substring(0, 50)
-              );
-            }
-          });
-
-          if (hasNewMessages) {
-            // Sort by creation time to maintain proper order
-            const sortedMessages = mergedMessages.sort(
-              (a, b) =>
-                new Date(a.createdAt).getTime() -
-                new Date(b.createdAt).getTime()
-            );
-            console.log(
-              "📨 Added",
-              uiMessages.length - prev.length,
-              "new messages, total:",
-              sortedMessages.length
-            );
-            return sortedMessages;
-          } else {
-            console.log("📨 No new messages found");
-            return prev;
-          }
-        });
+      // Show more specific error messages
+      if (error.message?.includes("appointment not yet implemented")) {
+        Alert.alert(
+          "Thông báo",
+          "Tính năng tạo phòng chat từ cuộc hẹn đang được phát triển. Vui lòng thử lại sau hoặc liên hệ hỗ trợ.",
+          [{ text: "OK", onPress: () => router.back() }]
+        );
+      } else if (error.message?.includes("room")) {
+        Alert.alert(
+          "Lỗi tạo phòng chat",
+          "Không thể tạo hoặc tìm phòng chat. Vui lòng thử lại sau.",
+          [
+            { text: "Thử lại", onPress: () => findOrCreateRoom() },
+            { text: "Hủy", onPress: () => router.back() },
+          ]
+        );
       } else {
-        console.log("📨 Prepending older messages");
-        setMessages((prev) => [...uiMessages, ...prev]);
+        throw error; // Re-throw other errors to be handled by parent
       }
-
-      // Scroll to bottom for new messages (only for first page)
-      if (page === 1) {
-        setTimeout(() => {
-          flatListRef.current?.scrollToEnd({ animated: true });
-        }, 100);
-      }
-    } catch (error) {
-      console.error("❌ Failed to load messages:", error);
     }
   };
 
-  const convertChatMessageToUIMessage = (chatMessage: ChatMessage): Message => {
-    const isOwn = chatMessage.senderId === currentUserId;
-
-    // Extract image/file URLs from attachments array
-    const attachments = chatMessage.attachments || [];
-    let imageUrl = null;
-    let fileUrl = null;
-    let fileName = null;
-
-    if (attachments.length > 0) {
-      if (chatMessage.messageType === "image") {
-        imageUrl = attachments[0]; // First attachment is the image
-      } else if (chatMessage.messageType === "file") {
-        fileUrl = attachments[0]; // First attachment is the file
-        // Extract filename from URL or use a default
-        fileName = attachments[0]?.split("/").pop() || "Document";
-      }
-    }
-
-    // Debug logging for message conversion
-    console.log("🔄 Converting chat message to UI message:", {
-      messageId: chatMessage._id,
-      messageType: chatMessage.messageType,
-      content: chatMessage.content,
-      attachments: chatMessage.attachments,
-      extractedImageUrl: imageUrl,
-      extractedFileUrl: fileUrl,
-      extractedFileName: fileName,
-      hasAttachments: !!attachments.length,
-    });
-
-    return {
-      _id: chatMessage._id,
-      text: chatMessage.content,
-      createdAt: new Date(chatMessage.createdAt),
-      user: {
-        _id: chatMessage.senderId,
-        name:
-          chatMessage.senderName || (isOwn ? "Bạn" : (doctorName as string)),
-        avatar: isOwn
-          ? undefined
-          : "https://images.unsplash.com/photo-1612349317150-e413f6a5b16d?w=100&h=100&fit=crop&crop=face",
-      },
-      type:
-        chatMessage.messageType === "text"
-          ? "text"
-          : (chatMessage.messageType as any),
-      isOwn,
-      // Use extracted URLs from attachments
-      imageUrl: imageUrl,
-      fileUrl: fileUrl,
-      fileName: fileName,
-    };
-  };
-
-  const handleMessageReceived = (message: ChatMessage) => {
+  const handleMessageReceived = (message: any) => {
     console.log("📨 Handling received message via WebSocket:", {
       messageId: message._id,
-      roomId: message.roomId,
-      currentRoomId: room?._id,
+      roomId: message.chatRoomId || message.roomId, // Backend uses chatRoomId
       senderId: message.senderId,
       currentUserId,
       messageType: message.messageType,
       content: message.content?.substring(0, 50),
+      senderType: message.senderType,
     });
 
-    if (room && message.roomId === room._id) {
+    // Backend uses chatRoomId instead of roomId
+    const messageRoomId = message.chatRoomId || message.roomId;
+
+    if (room && messageRoomId === room._id) {
+      console.log("✅ Message is for current room, adding to UI");
+
       const uiMessage = convertChatMessageToUIMessage(message);
       setMessages((prev) => {
         // Check if message already exists to avoid duplicates
         const exists = prev.some((msg) => msg._id === message._id);
         if (!exists) {
           console.log("📨 Adding received WebSocket message to list");
-          // Add new message and sort to maintain order
+          console.log("📨 New message details:", {
+            id: uiMessage._id,
+            text: uiMessage.text?.substring(0, 30),
+            isOwn: uiMessage.isOwn,
+            senderName: uiMessage.user.name,
+          });
+
+          // Add new message and sort to maintain chronological order
           const newMessages = [...prev, uiMessage].sort(
             (a, b) =>
               new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
           );
+
+          console.log("📨 Updated messages count:", newMessages.length);
           return newMessages;
         } else {
           console.log("📨 WebSocket message already exists, skipping");
@@ -507,18 +638,26 @@ export default function DoctorChatScreen() {
         }
       });
 
-      // Auto-scroll to bottom
+      // Auto-scroll to bottom with a slight delay to ensure UI has updated
       setTimeout(() => {
+        console.log("📜 Auto-scrolling to bottom for new message");
         flatListRef.current?.scrollToEnd({ animated: true });
-      }, 100);
+      }, 200);
 
       // Mark as read if not own message
-      if (message.senderId !== currentUserId) {
+      const messageSenderId = message.senderId?._id || message.senderId;
+      if (messageSenderId !== currentUserId) {
         console.log("✅ Marking WebSocket message as read (not own message)");
-        chatService.markAsRead(room._id);
+        setTimeout(() => {
+          chatService.markAsRead(room._id);
+        }, 500);
       }
     } else {
-      console.log("⚠️ WebSocket message ignored: wrong room or no room set");
+      console.log("⚠️ WebSocket message ignored:", {
+        reason: !room ? "No room set" : "Different room",
+        messageRoomId,
+        currentRoomId: room?._id,
+      });
     }
   };
 
@@ -556,59 +695,95 @@ export default function DoctorChatScreen() {
     }
   };
 
+  const handleRoomJoined = (data: {
+    roomId: string;
+    userId: string;
+    roomMemberCount?: number;
+  }) => {
+    console.log("🏠 Handling room joined event:", {
+      roomId: data.roomId,
+      userId: data.userId,
+      memberCount: data.roomMemberCount,
+      currentRoomId: room?._id,
+      currentUserId,
+    });
+
+    if (room && data.roomId === room._id) {
+      console.log("✅ Successfully joined room:", data.roomId);
+      console.log("👥 Room member count:", data.roomMemberCount);
+      // Room joined successfully, we can now start receiving messages
+      // Maybe refresh messages or show a success indicator
+    } else {
+      console.log("⚠️ Room joined event for different room:", data.roomId);
+    }
+  };
+
   const handleError = (error: any) => {
     console.error("Chat error:", error);
 
-    // Don't show alert for connection errors, just switch to offline mode
+    // Handle authentication errors specifically
+    if (
+      error.message?.includes("Auth error") ||
+      error.message?.includes("Authentication failed")
+    ) {
+      console.log("🔐 Authentication error detected, redirecting to login");
+      Alert.alert(
+        "Lỗi xác thực",
+        "Phiên đăng nhập hết hạn. Vui lòng đăng nhập lại.",
+        [
+          {
+            text: "Đăng nhập",
+            onPress: () => router.replace("/(auth)/login"),
+          },
+        ]
+      );
+      return;
+    }
+
+    // For WebSocket errors, try to reconnect with exponential backoff
     if (
       error.message?.includes("websocket") ||
-      error.message?.includes("connection")
+      error.message?.includes("connection") ||
+      error.message?.includes("timeout")
     ) {
-      console.log("Switching to offline mode due to connection error");
-      setIsOfflineMode(true);
+      console.log("🔄 WebSocket error, implementing reconnection strategy...");
       setIsConnected(false);
+      setIsOfflineMode(true);
 
-      if (room) {
-        startPolling();
-      }
+      // Use exponential backoff for reconnection
+      const backoffDelay = Math.min(1000 * Math.pow(2, Math.min(5, 3)), 30000); // Max 30 seconds
+
+      setTimeout(() => {
+        console.log(
+          `🔄 Attempting to reconnect WebSocket after ${backoffDelay}ms...`
+        );
+        initializeWebSocket().catch((reconnectError) => {
+          console.error("❌ Reconnection failed:", reconnectError);
+
+          // Only show alert if we're still on this screen
+          if (!isOfflineMode) return; // User might have navigated away
+
+          Alert.alert(
+            "Lỗi kết nối",
+            "Không thể kết nối lại. Vui lòng kiểm tra mạng.",
+            [
+              {
+                text: "Thử lại",
+                onPress: () => initializeWebSocket().catch(console.error),
+              },
+              { text: "Hủy", style: "cancel" },
+            ]
+          );
+        });
+      }, backoffDelay);
     } else {
       Alert.alert("Lỗi Chat", "Đã xảy ra lỗi khi chat. Vui lòng thử lại.");
     }
   };
 
-  const startPolling = () => {
-    if (!room || pollTimeoutRef.current) {
-      console.log("⚠️ Cannot start polling: no room or already polling");
-      return;
-    }
-
-    console.log("🔄 Starting message polling for room:", room._id);
-    const poll = async () => {
-      try {
-        console.log("📨 Polling for new messages...");
-        await loadMessages(room._id, 1);
-        // Poll every 2 seconds for more responsive updates
-        pollTimeoutRef.current = setTimeout(poll, 2000);
-      } catch (error) {
-        console.error("❌ Polling error:", error);
-        // Retry after longer delay on error
-        pollTimeoutRef.current = setTimeout(poll, 5000);
-      }
-    };
-
-    poll();
-  };
-
-  const stopPolling = () => {
-    if (pollTimeoutRef.current) {
-      console.log("⏹️ Stopping message polling...");
-      clearTimeout(pollTimeoutRef.current);
-      pollTimeoutRef.current = null;
-    }
-  };
-
   const cleanup = () => {
-    if (room && !isOfflineMode) {
+    if (room && isConnected) {
+      console.log("🧹 Cleaning up WebSocket connections...");
       chatService.leaveRoom(room._id);
       chatService.sendTypingStatus(room._id, false);
     }
@@ -617,16 +792,15 @@ export default function DoctorChatScreen() {
       clearTimeout(typingTimeoutRef.current);
     }
 
-    stopPolling();
+    // No more polling cleanup needed
+
+    if (userActivityTimeoutRef.current) {
+      clearTimeout(userActivityTimeoutRef.current);
+    }
   };
 
   const sendMessage = async () => {
     if (inputText.trim() === "" || !room || isSending) {
-      console.log("⚠️ Cannot send message:", {
-        hasText: !!inputText.trim(),
-        hasRoom: !!room,
-        isSending,
-      });
       return;
     }
 
@@ -636,42 +810,22 @@ export default function DoctorChatScreen() {
     setIsSending(true);
 
     try {
-      const messageData: SendMessageRequest = {
-        content: messageContent,
-        messageType: "text",
-      };
+      // Send via HTTP API - WebSocket will broadcast the response
+      console.log("💬 Sending message via HTTP API");
+      const sentMessage = await chatService.sendMessageToDoctor(
+        room._id,
+        messageContent
+      );
 
-      console.log("💬 Sending message to room:", room._id);
-      const sentMessage = await chatService.sendMessage(room._id, messageData);
-      console.log("✅ Message sent successfully:", sentMessage);
+      console.log("✅ Message sent via HTTP API:", sentMessage);
 
-      // Immediately add the sent message to UI
-      const uiMessage = convertChatMessageToUIMessage(sentMessage);
-      console.log("📨 Adding sent message to UI immediately:", uiMessage);
+      // Don't manually add to UI here - let WebSocket handle it
+      // The new_message event will add it to the UI automatically
 
-      setMessages((prev) => {
-        // Check if message already exists to avoid duplicates
-        const exists = prev.some((msg) => msg._id === sentMessage._id);
-        if (!exists) {
-          console.log("📨 Message added to UI, new count:", prev.length + 1);
-          return [...prev, uiMessage];
-        } else {
-          console.log("📨 Message already exists, skipping");
-          return prev;
-        }
-      });
-
-      // Stop typing indicator (only in real-time mode)
+      // Stop typing indicator
       if (!isOfflineMode) {
-        console.log("✍️ Stopping typing indicator");
         chatService.sendTypingStatus(room._id, false);
       }
-
-      // Force scroll to bottom
-      setTimeout(() => {
-        console.log("📜 Scrolling to bottom after sending message");
-        flatListRef.current?.scrollToEnd({ animated: true });
-      }, 100);
     } catch (error) {
       console.error("❌ Failed to send message:", error);
       Alert.alert("Lỗi", "Không thể gửi tin nhắn. Vui lòng thử lại.");
@@ -679,20 +833,15 @@ export default function DoctorChatScreen() {
     } finally {
       setIsSending(false);
     }
-
-    // Scroll to bottom
-    setTimeout(() => {
-      flatListRef.current?.scrollToEnd({ animated: true });
-    }, 100);
   };
 
   const handleInputChange = (text: string) => {
     setInputText(text);
 
-    // Only send typing indicators in real-time mode
-    if (!room || isOfflineMode) return;
+    // Send typing indicators via WebSocket
+    if (!room || !isConnected) return;
 
-    // Send typing indicator - but don't set local isTyping state for own typing
+    // Send typing indicator
     if (text.length > 0) {
       chatService.sendTypingStatus(room._id, true);
     }
@@ -718,26 +867,18 @@ export default function DoctorChatScreen() {
     }
 
     try {
-      const response = await userService.startCall(appointmentId as string, {
-        callType,
-      });
+      console.log("🚀 Starting call for appointment:", appointmentId);
 
-      if (response.success) {
-        router.push({
-          pathname: "/(stacks)/video-call",
-          params: {
-            appointmentId: appointmentId,
-            doctorId: doctorId,
-            doctorName: doctorName,
-            token: response.data.patientToken,
-            channelName: response.data.channelName,
-            uid: response.data.patientUid.toString(),
-            appId: response.data.agoraAppId,
-          },
-        });
-      } else {
-        Alert.alert("Lỗi", response.message || "Không thể bắt đầu cuộc gọi");
-      }
+      // Just navigate with appointmentId, call details will be fetched in video-call screen
+      router.push({
+        pathname: "/(stacks)/video-call",
+        params: {
+          appointmentId: appointmentId,
+          doctorId: doctorId,
+          doctorName: doctorName,
+          callType: callType,
+        },
+      });
     } catch (error) {
       console.error("Error starting call:", error);
       Alert.alert("Lỗi", "Không thể kết nối để bắt đầu cuộc gọi");
@@ -754,24 +895,18 @@ export default function DoctorChatScreen() {
     }
 
     try {
-      const response = await userService.joinCall(appointmentId as string);
+      console.log("🔗 Joining existing call for appointment:", appointmentId);
 
-      if (response.success) {
-        router.push({
-          pathname: "/(stacks)/video-call",
-          params: {
-            appointmentId: appointmentId,
-            doctorId: doctorId,
-            doctorName: doctorName,
-            token: response.data.patientToken,
-            channelName: response.data.channelName,
-            uid: response.data.patientUid.toString(),
-            appId: response.data.agoraAppId,
-          },
-        });
-      } else {
-        Alert.alert("Lỗi", response.message || "Không thể tham gia cuộc gọi");
-      }
+      // Just navigate with appointmentId, call details will be fetched in video-call screen
+      router.push({
+        pathname: "/(stacks)/video-call",
+        params: {
+          appointmentId: appointmentId,
+          doctorId: doctorId,
+          doctorName: doctorName,
+          isJoining: "true",
+        },
+      });
     } catch (error) {
       console.error("Error joining call:", error);
       Alert.alert("Lỗi", "Không thể kết nối để tham gia cuộc gọi");
@@ -804,18 +939,17 @@ export default function DoctorChatScreen() {
   };
 
   const renderMessage = ({ item, index }: { item: Message; index: number }) => {
-    const isCurrentUser = item.user._id === currentUserId;
+    // Fix: Use the isOwn property from the message instead of recalculating
+    const isCurrentUser = item.isOwn;
 
-    // Debug logging for message rendering
     console.log("🖼️ Rendering message:", {
       messageId: item._id,
+      isCurrentUser: isCurrentUser,
+      senderName: item.user.name,
+      senderId: item.user._id,
+      currentUserId: currentUserId,
       type: item.type,
-      text: item.text,
-      imageUrl: item.imageUrl,
-      fileUrl: item.fileUrl,
-      fileName: item.fileName,
-      hasImageUrl: !!item.imageUrl,
-      hasFileUrl: !!item.fileUrl,
+      text: item.text?.substring(0, 50),
     });
 
     return (
@@ -1040,6 +1174,7 @@ export default function DoctorChatScreen() {
         uri: asset.uri,
         fileName: asset.fileName,
         mimeType: asset.mimeType,
+        mimeType: asset.mimeType,
         fileSize: asset.fileSize,
         width: asset.width,
         height: asset.height,
@@ -1202,6 +1337,29 @@ export default function DoctorChatScreen() {
     ]);
   };
 
+  // Add a function to refresh messages when currentUserId changes
+  useEffect(() => {
+    if (room && currentUserId) {
+      console.log("🔄 currentUserId changed, refreshing message display");
+      // Re-convert existing messages with the correct currentUserId
+      setMessages((prevMessages) =>
+        prevMessages.map((msg) => {
+          // Find the original chat message data if available
+          // For now, just update the isOwn property based on senderId
+          const isOwn = msg.user._id === currentUserId;
+          return {
+            ...msg,
+            isOwn,
+            user: {
+              ...msg.user,
+              name: isOwn ? "Bạn" : msg.user.name,
+            },
+          };
+        })
+      );
+    }
+  }, [currentUserId, room]);
+
   if (isLoading) {
     return (
       <SafeAreaView style={styles.container}>
@@ -1256,11 +1414,14 @@ export default function DoctorChatScreen() {
             <View style={styles.headerText}>
               <Text style={styles.headerName}>{doctorName}</Text>
               <Text style={styles.headerStatus}>
-                {isConnected
-                  ? "Đang hoạt động"
-                  : isOfflineMode
-                  ? "Ngoại tuyến"
-                  : "Đang kết nối..."}
+                {isConnected ? (
+                  <>
+                    🟢 Trực tuyến
+                    {onlineCount > 1 ? ` • ${onlineCount} người` : ""}
+                  </>
+                ) : (
+                  "🔴 Đang kết nối..."
+                )}
               </Text>
             </View>
           </View>
@@ -1310,8 +1471,13 @@ export default function DoctorChatScreen() {
             <TouchableOpacity
               style={styles.attachButton}
               onPress={showAttachmentOptions}
+              disabled={!isConnected}
             >
-              <Ionicons name="add" size={24} color="#00A86B" />
+              <Ionicons
+                name="add"
+                size={24}
+                color={isConnected ? "#00A86B" : "#999"}
+              />
             </TouchableOpacity>
 
             <View style={styles.textInputContainer}>
@@ -1320,23 +1486,24 @@ export default function DoctorChatScreen() {
                 value={inputText}
                 onChangeText={handleInputChange}
                 placeholder={
-                  isOfflineMode
-                    ? "Nhập tin nhắn (ngoại tuyến)..."
-                    : "Nhập tin nhắn..."
+                  isConnected ? "Nhập tin nhắn..." : "Đang kết nối..."
                 }
                 placeholderTextColor="#999"
                 multiline
                 maxLength={1000}
-                editable={true}
+                editable={isConnected}
                 onFocus={handleUserActivity}
                 onSelectionChange={handleUserActivity}
               />
             </View>
 
             <TouchableOpacity
-              style={[styles.sendButton, isSending && { opacity: 0.6 }]}
+              style={[
+                styles.sendButton,
+                (isSending || !isConnected) && { opacity: 0.6 },
+              ]}
               onPress={sendMessage}
-              disabled={isSending || inputText.trim() === ""}
+              disabled={isSending || inputText.trim() === "" || !isConnected}
             >
               {isSending ? (
                 <ActivityIndicator size={16} color="#FFFFFF" />

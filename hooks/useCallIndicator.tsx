@@ -3,113 +3,99 @@ import { create } from "zustand";
 import { subscribeWithSelector } from "zustand/middleware";
 
 interface CallIndicatorState {
-  isInCall: boolean;
-  callDuration: number;
+  isCallActive: boolean;
+  isIncomingCall: boolean;
   participantName: string;
-  appointmentId: string;
+  callDuration: number;
+  appointmentId: string | null;
   callData: any;
-  isPersistent: boolean;
-  timerId: NodeJS.Timeout | null; // Add timer reference
+}
+
+interface CallIndicatorActions {
   startCall: (data: {
     participantName: string;
     appointmentId: string;
-    callData?: any;
+    callData: any;
+  }) => void;
+  startIncomingCall: (data: {
+    participantName: string;
+    appointmentId: string;
+    callData: any;
   }) => void;
   endCall: () => void;
   updateDuration: (duration: number) => void;
-  setPersistent: (persistent: boolean) => void;
-  startGlobalTimer: () => void;
-  stopGlobalTimer: () => void;
+  acceptIncomingCall: () => void;
+  rejectIncomingCall: () => void;
 }
 
-export const useCallIndicatorStore = create<CallIndicatorState>()(
+export const useCallIndicatorStore = create<
+  CallIndicatorState & CallIndicatorActions
+>()(
   subscribeWithSelector((set, get) => ({
-    isInCall: false,
-    callDuration: 0,
+    isCallActive: false,
+    isIncomingCall: false,
     participantName: "",
-    appointmentId: "",
+    callDuration: 0,
+    appointmentId: null,
     callData: null,
-    isPersistent: false,
-    timerId: null,
 
     startCall: (data) => {
-      console.log("Starting call indicator:", data);
-      // Use requestAnimationFrame to batch the update
-      requestAnimationFrame(() => {
-        set({
-          isInCall: true,
-          participantName: data.participantName,
-          appointmentId: data.appointmentId,
-          callData: data.callData,
-          callDuration: 0,
-          isPersistent: true,
-        });
+      console.log("📞 Starting outgoing call indicator:", data);
+      set({
+        isCallActive: true,
+        isIncomingCall: false,
+        participantName: data.participantName,
+        appointmentId: data.appointmentId,
+        callData: data.callData,
+        callDuration: 0,
+      });
+    },
 
-        // Start global timer
-        get().startGlobalTimer();
+    startIncomingCall: (data) => {
+      console.log("📞 Starting incoming call indicator:", data);
+      set({
+        isCallActive: true,
+        isIncomingCall: true,
+        participantName: data.participantName,
+        appointmentId: data.appointmentId,
+        callData: data.callData,
+        callDuration: 0,
+      });
+    },
+
+    acceptIncomingCall: () => {
+      console.log("📞 Accepting incoming call");
+      set({ isIncomingCall: false });
+    },
+
+    rejectIncomingCall: () => {
+      console.log("📞 Rejecting incoming call");
+      set({
+        isCallActive: false,
+        isIncomingCall: false,
+        participantName: "",
+        callDuration: 0,
+        appointmentId: null,
+        callData: null,
       });
     },
 
     endCall: () => {
-      console.log("Ending call indicator");
-      const { timerId } = get();
-
-      // Stop global timer
-      if (timerId) {
-        clearInterval(timerId);
-      }
-
-      // Use requestAnimationFrame to batch the update
-      requestAnimationFrame(() => {
-        set({
-          isInCall: false,
-          callDuration: 0,
-          participantName: "",
-          appointmentId: "",
-          callData: null,
-          isPersistent: false,
-          timerId: null,
-        });
+      console.log("📞 Ending call indicator");
+      set({
+        isCallActive: false,
+        isIncomingCall: false,
+        participantName: "",
+        callDuration: 0,
+        appointmentId: null,
+        callData: null,
       });
     },
 
     updateDuration: (duration) => {
-      // Only update if it's different
-      const currentDuration = get().callDuration;
-      if (duration !== currentDuration) {
+      if (!get().isIncomingCall) {
+        // Only update duration for active calls, not incoming
         set({ callDuration: duration });
-      }
-    },
-
-    setPersistent: (persistent) => {
-      set({ isPersistent: persistent });
-    },
-
-    startGlobalTimer: () => {
-      const { timerId } = get();
-
-      // Don't start if already running
-      if (timerId) {
-        console.log("Global timer already running");
-        return;
-      }
-
-      console.log("Starting global call timer");
-      const newTimerId = setInterval(() => {
-        const currentDuration = get().callDuration;
-        const newDuration = currentDuration + 1;
-        set({ callDuration: newDuration });
-      }, 1000);
-
-      set({ timerId: newTimerId });
-    },
-
-    stopGlobalTimer: () => {
-      const { timerId } = get();
-      if (timerId) {
-        console.log("Stopping global call timer");
-        clearInterval(timerId);
-        set({ timerId: null });
       }
     },
   }))
@@ -120,7 +106,7 @@ export const useCallIndicator = () => {
   const store = useCallIndicatorStore();
 
   const currentRoute = segments.join("/");
-  const shouldShow = store.isInCall && !currentRoute.includes("video-call");
+  const shouldShow = store.isCallActive && !currentRoute.includes("video-call");
 
   return {
     ...store,

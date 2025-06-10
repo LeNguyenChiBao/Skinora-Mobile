@@ -443,94 +443,46 @@ export const userService = {
 
   startCall: async (
     appointmentId: string,
-    callRequest: StartCallRequest
-  ): Promise<StartCallResponse> => {
+    options: { callType: "video" | "audio"; forceCreate?: boolean }
+  ) => {
     try {
       const token = await authService.getToken();
+      const API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL;
 
       console.log("Starting call with:", {
         appointmentId,
-        callType: callRequest.callType,
+        callType: options.callType,
+        forceCreate: options.forceCreate,
         url: `${API_BASE_URL}/appointments/${appointmentId}/start-call`,
       });
+
+      const body = {
+        callType: options.callType,
+      };
+
+      // Add forceCreate if specified
+      if (options.forceCreate) {
+        body.forceCreate = true;
+      }
 
       const response = await fetch(
         `${API_BASE_URL}/appointments/${appointmentId}/start-call`,
         {
           method: "POST",
           headers: {
-            "Content-Type": "application/json",
             Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
           },
-          body: JSON.stringify({
-            callType: callRequest.callType,
-          }),
+          body: JSON.stringify(body),
         }
       );
 
       console.log("API Response status:", response.status);
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        console.error("API Error:", errorData);
-
-        if (
-          errorData.message?.includes("Invalid doctor or doctor not available")
-        ) {
-          throw new Error("Bác sĩ hiện không có sẵn. Vui lòng thử lại sau.");
-        }
-
-        throw new Error(errorData.message || "Failed to start call");
-      }
-
       const result = await response.json();
-      console.log("Full API response:", JSON.stringify(result, null, 2));
+      console.log("Full API response:", result);
+      console.log("Response data:", result);
 
-      const responseData = result.data || result;
-      console.log("Response data:", JSON.stringify(responseData, null, 2));
-
-      // Your backend returns: token, uid, agoraAppId, channelName
-      const hasAgoraInfo =
-        responseData.agoraAppId &&
-        responseData.channelName &&
-        responseData.token;
-
-      if (!hasAgoraInfo) {
-        console.error("Missing Agora fields:", {
-          agoraAppId: responseData.agoraAppId,
-          channelName: responseData.channelName,
-          token: responseData.token,
-          uid: responseData.uid,
-        });
-        throw new Error("Thiếu thông tin Agora từ server");
-      }
-
-      return {
-        success: result.success !== undefined ? result.success : true,
-        message: result.message || "Call started successfully",
-        data: {
-          callId: responseData.callId?.toString() || responseData.callId,
-          channelName: responseData.channelName,
-          patientToken: responseData.token, // Your backend uses 'token' not 'patientToken'
-          patientUid: responseData.uid, // Your backend uses 'uid' not 'patientUid'
-          doctorInfo: responseData.doctorInfo || {
-            id: "unknown",
-            name: "Doctor",
-            avatar: "",
-          },
-          appointmentId: responseData.appointment?.id || appointmentId,
-          agoraAppId: responseData.agoraAppId,
-          appointment: responseData.appointment || {
-            id: appointmentId,
-            startTime: new Date().toISOString(),
-            endTime: new Date().toISOString(),
-            status: "active",
-          },
-          userRole: responseData.userRole || "patient",
-          initiatedBy: responseData.initiatedBy || "current-user",
-          message: responseData.message || "Call initiated",
-        },
-      };
+      return result;
     } catch (error) {
       console.error("Error starting call:", error);
       throw error;
@@ -630,6 +582,201 @@ export const userService = {
       };
     } catch (error) {
       console.error("Error joining call:", error);
+      throw error;
+    }
+  },
+
+  checkActiveCall: async () => {
+    try {
+      const token = await authService.getToken();
+      const API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL;
+
+      const response = await fetch(`${API_BASE_URL}/calls/active/user`, {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+      });
+
+      const result = await response.json();
+      console.log("🔍 Active call check result:", result);
+
+      return result;
+    } catch (error) {
+      console.error("❌ Error checking active call:", error);
+      return {
+        success: false,
+        message: error.message,
+        data: { hasActiveCall: false },
+      };
+    }
+  },
+
+  async endCall(callId: string) {
+    try {
+      const token = await authService.getToken();
+      const API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL;
+
+      console.log("🔚 Ending call:", callId);
+
+      const response = await fetch(`${API_BASE_URL}/calls/${callId}/end`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+      });
+
+      const result = await response.json();
+      console.log("🔚 End call result:", result);
+
+      return result;
+    } catch (error) {
+      console.error("❌ Error ending call:", error);
+      throw error;
+    }
+  },
+
+  async createCall(
+    appointmentId: string,
+    options: { callType: "video" | "audio" }
+  ) {
+    try {
+      const token = await authService.getToken();
+      const API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL;
+
+      console.log("🆕 Creating new call for appointment:", appointmentId);
+
+      // Get user data to extract userId
+      const userData = await authService.getUserData();
+      if (!userData?.id) {
+        throw new Error("User ID not found");
+      }
+
+      // First, get appointment details to extract doctorId
+      console.log("📋 Fetching appointment details...");
+      const appointmentResponse = await fetch(
+        `${API_BASE_URL}/appointments/${appointmentId}`,
+        {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+        }
+      );
+
+      if (!appointmentResponse.ok) {
+        throw new Error("Failed to fetch appointment details");
+      }
+
+      const appointmentData = await appointmentResponse.json();
+      console.log("📋 Appointment data:", appointmentData);
+
+      const doctorId =
+        appointmentData.data?.doctorId?._id || appointmentData.data?.doctorId;
+      if (!doctorId) {
+        throw new Error("Doctor ID not found in appointment");
+      }
+
+      // Try different endpoints with proper parameters
+      const endpoints = [
+        {
+          path: `/calls/initiate`,
+          body: {
+            appointmentId,
+            patientId: userData.id,
+            doctorId: doctorId,
+            callType: options.callType,
+          },
+        },
+        {
+          path: `/appointments/${appointmentId}/start-call`,
+          body: {
+            callType: options.callType,
+            patientId: userData.id,
+            doctorId: doctorId,
+          },
+        },
+      ];
+
+      for (const endpoint of endpoints) {
+        try {
+          console.log(`🔄 Trying endpoint: ${endpoint.path}`);
+          console.log(`📋 With body:`, endpoint.body);
+
+          const response = await fetch(`${API_BASE_URL}${endpoint.path}`, {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${token}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(endpoint.body),
+          });
+
+          const result = await response.json();
+          console.log(`📋 Response from ${endpoint.path}:`, result);
+
+          if (result.success) {
+            console.log(
+              "✅ Successfully created call with endpoint:",
+              endpoint.path
+            );
+            return result;
+          } else if (response.status === 201 || response.status === 200) {
+            // Some APIs return 200/201 even with success: false, check if we have valid data
+            if (
+              result.data &&
+              result.data.agoraAppId &&
+              result.data.channelName
+            ) {
+              console.log("✅ Got valid call data despite success: false");
+              return {
+                ...result,
+                success: true,
+              };
+            }
+          }
+        } catch (endpointError) {
+          console.log(
+            `❌ Endpoint ${endpoint.path} failed:`,
+            endpointError.message
+          );
+          continue;
+        }
+      }
+
+      throw new Error("All create call endpoints failed");
+    } catch (error) {
+      console.error("❌ Error creating call:", error);
+      throw error;
+    }
+  },
+
+  getAppointmentById: async (appointmentId: string) => {
+    try {
+      const token = await authService.getToken();
+
+      const response = await fetch(
+        `${API_BASE_URL}/appointments/${appointmentId}`,
+        {
+          method: "GET",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error("Failed to fetch appointment details");
+      }
+
+      const result = await response.json();
+      return result;
+    } catch (error) {
+      console.error("Error fetching appointment details:", error);
       throw error;
     }
   },

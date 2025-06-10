@@ -1,8 +1,10 @@
+import { useCallIndicatorStore } from "@/hooks/useCallIndicator";
+import { callNotificationManager } from "@/services/callNotification.service";
 import { Ionicons } from "@expo/vector-icons";
+import { BlurView } from "expo-blur";
 import { useRouter } from "expo-router";
-import React, { useEffect, useState } from "react";
+import React from "react";
 import {
-  Animated,
   Dimensions,
   StyleSheet,
   Text,
@@ -12,62 +14,19 @@ import {
 
 const { width } = Dimensions.get("window");
 
-interface CallIndicatorProps {
-  isVisible: boolean;
-  callDuration: number;
-  participantName: string;
-  appointmentId: string;
-  callData?: any;
-}
-
-export const CallIndicator: React.FC<CallIndicatorProps> = ({
-  isVisible,
-  callDuration,
-  participantName,
-  appointmentId,
-  callData,
-}) => {
+export default function CallIndicator() {
   const router = useRouter();
-  const [slideAnim] = useState(new Animated.Value(-100));
-  const [pulseAnim] = useState(new Animated.Value(1));
-
-  useEffect(() => {
-    if (isVisible) {
-      // Slide down animation
-      Animated.spring(slideAnim, {
-        toValue: 0,
-        useNativeDriver: true,
-        tension: 100,
-        friction: 8,
-      }).start();
-
-      // Pulse animation for the call indicator
-      const pulseAnimation = Animated.loop(
-        Animated.sequence([
-          Animated.timing(pulseAnim, {
-            toValue: 1.2,
-            duration: 1000,
-            useNativeDriver: true,
-          }),
-          Animated.timing(pulseAnim, {
-            toValue: 1,
-            duration: 1000,
-            useNativeDriver: true,
-          }),
-        ])
-      );
-      pulseAnimation.start();
-
-      return () => pulseAnimation.stop();
-    } else {
-      // Slide up animation
-      Animated.timing(slideAnim, {
-        toValue: -100,
-        duration: 300,
-        useNativeDriver: true,
-      }).start();
-    }
-  }, [isVisible]);
+  const {
+    isCallActive,
+    isIncomingCall,
+    participantName,
+    callDuration,
+    appointmentId,
+    callData,
+    acceptIncomingCall,
+    rejectIncomingCall,
+    endCall,
+  } = useCallIndicatorStore();
 
   const formatDuration = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -77,143 +36,265 @@ export const CallIndicator: React.FC<CallIndicatorProps> = ({
       .padStart(2, "0")}`;
   };
 
-  const returnToCall = () => {
-    console.log(
-      "Returning to call with preserved session, duration:",
-      callDuration
-    );
+  const handleCallTap = () => {
     router.push({
       pathname: "/(stacks)/video-call",
       params: {
-        appointmentId,
+        appointmentId: appointmentId,
+        doctorId: callData?.doctorId,
         doctorName: participantName,
-        // Pass back the preserved call data
-        ...callData,
-        // Add flag to indicate this is a session restoration
         isReturning: "true",
       },
     });
   };
 
-  if (!isVisible) return null;
+  const handleAcceptCall = async () => {
+    console.log("📞 Accepting incoming call");
+
+    try {
+      // Accept call via notification manager
+      const callInfo = await callNotificationManager.acceptCall(
+        callData?.callId
+      );
+
+      // Update store
+      acceptIncomingCall();
+
+      // Navigate to video call with call info
+      router.push({
+        pathname: "/(stacks)/video-call",
+        params: {
+          appointmentId: appointmentId,
+          doctorId: callData?.doctorId,
+          doctorName: participantName,
+          isJoining: "true",
+          isReturning: "false",
+        },
+      });
+    } catch (error) {
+      console.error("❌ Error accepting call:", error);
+      rejectIncomingCall();
+    }
+  };
+
+  const handleRejectCall = async () => {
+    console.log("📞 Rejecting incoming call");
+
+    try {
+      // Decline call via notification manager
+      await callNotificationManager.declineCall(
+        callData?.callId,
+        "user_declined"
+      );
+
+      // Update store
+      rejectIncomingCall();
+    } catch (error) {
+      console.error("❌ Error rejecting call:", error);
+      rejectIncomingCall();
+    }
+  };
+
+  if (!isCallActive) return null;
 
   return (
-    <Animated.View
-      style={[
-        styles.container,
-        {
-          transform: [{ translateY: slideAnim }],
-        },
-      ]}
-    >
-      <TouchableOpacity style={styles.callBar} onPress={returnToCall}>
-        <View style={styles.leftSection}>
-          <Animated.View
-            style={[
-              styles.callIndicator,
-              {
-                transform: [{ scale: pulseAnim }],
-              },
-            ]}
+    <View style={styles.container}>
+      <BlurView intensity={80} style={styles.blurContainer}>
+        {isIncomingCall ? (
+          // Incoming call UI
+          <View style={styles.incomingCallContainer}>
+            <View style={styles.callerInfo}>
+              <View style={styles.avatar}>
+                <Ionicons name="person" size={24} color="#FFFFFF" />
+              </View>
+              <View style={styles.callerDetails}>
+                <Text style={styles.incomingText}>Cuộc gọi đến</Text>
+                <Text style={styles.callerName}>{participantName}</Text>
+              </View>
+            </View>
+
+            <View style={styles.incomingActions}>
+              <TouchableOpacity
+                style={styles.rejectButton}
+                onPress={handleRejectCall}
+              >
+                <Ionicons name="call" size={24} color="#FFFFFF" />
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.acceptButton}
+                onPress={handleAcceptCall}
+              >
+                <Ionicons name="videocam" size={24} color="#FFFFFF" />
+              </TouchableOpacity>
+            </View>
+          </View>
+        ) : (
+          // Active call UI
+          <TouchableOpacity
+            style={styles.activeCallContainer}
+            onPress={handleCallTap}
+            activeOpacity={0.8}
           >
-            <Ionicons name="call" size={16} color="#FFFFFF" />
-          </Animated.View>
+            <View style={styles.callInfo}>
+              <View style={styles.avatar}>
+                <Ionicons name="person" size={20} color="#FFFFFF" />
+              </View>
+              <View style={styles.callDetails}>
+                <Text style={styles.participantName}>{participantName}</Text>
+                <Text style={styles.callDuration}>
+                  {formatDuration(callDuration)}
+                </Text>
+              </View>
+            </View>
 
-          <View style={styles.callInfo}>
-            <Text style={styles.callText} numberOfLines={1}>
-              Cuộc gọi với {participantName}
-            </Text>
-            <Text style={styles.durationText}>
-              {formatDuration(callDuration)} • Nhấn để quay lại
-            </Text>
-          </View>
-        </View>
-
-        <View style={styles.rightSection}>
-          <TouchableOpacity style={styles.actionButton}>
-            <Ionicons name="videocam" size={20} color="#FFFFFF" />
+            <View style={styles.callActions}>
+              <View style={styles.activeIndicator}>
+                <View style={styles.pulseDot} />
+              </View>
+              <Text style={styles.tapToReturn}>Nhấn để quay lại</Text>
+            </View>
           </TouchableOpacity>
-
-          <TouchableOpacity style={styles.actionButton}>
-            <Ionicons name="mic" size={20} color="#FFFFFF" />
-          </TouchableOpacity>
-
-          <View style={styles.returnButton}>
-            <Ionicons name="chevron-up" size={16} color="#FFFFFF" />
-          </View>
-        </View>
-      </TouchableOpacity>
-
-      {/* Subtle shadow/border at bottom */}
-      <View style={styles.shadowLine} />
-    </Animated.View>
+        )}
+      </BlurView>
+    </View>
   );
-};
+}
 
 const styles = StyleSheet.create({
   container: {
     position: "absolute",
-    top: 0,
+    top: 50,
     left: 0,
     right: 0,
-    zIndex: 9999,
-    elevation: 10,
-  },
-  callBar: {
-    backgroundColor: "#00A86B",
-    paddingTop: 40, // Account for status bar
-    paddingBottom: 12,
+    zIndex: 1000,
     paddingHorizontal: 16,
+  },
+
+  blurContainer: {
+    borderRadius: 16,
+    overflow: "hidden",
+    backgroundColor: "rgba(0, 168, 107, 0.9)",
+  },
+
+  // Active call styles
+  activeCallContainer: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
+    paddingHorizontal: 16,
+    paddingVertical: 12,
   },
-  leftSection: {
-    flexDirection: "row",
-    alignItems: "center",
-    flex: 1,
-  },
-  callIndicator: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: "rgba(255, 255, 255, 0.2)",
-    justifyContent: "center",
-    alignItems: "center",
-    marginRight: 12,
-  },
+
   callInfo: {
-    flex: 1,
-  },
-  callText: {
-    color: "#FFFFFF",
-    fontSize: 16,
-    fontWeight: "600",
-  },
-  durationText: {
-    color: "rgba(255, 255, 255, 0.8)",
-    fontSize: 14,
-    marginTop: 2,
-  },
-  rightSection: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
+    flex: 1,
   },
-  actionButton: {
+
+  avatar: {
     width: 36,
     height: 36,
     borderRadius: 18,
     backgroundColor: "rgba(255, 255, 255, 0.2)",
     justifyContent: "center",
     alignItems: "center",
+    marginRight: 12,
   },
-  returnButton: {
-    marginLeft: 8,
-    padding: 4,
+
+  callDetails: {
+    flex: 1,
   },
-  shadowLine: {
-    height: 1,
-    backgroundColor: "rgba(0, 0, 0, 0.1)",
+
+  participantName: {
+    fontSize: 16,
+    fontWeight: "bold",
+    color: "#FFFFFF",
+    marginBottom: 2,
+  },
+
+  callDuration: {
+    fontSize: 14,
+    color: "#FFFFFF",
+    opacity: 0.8,
+  },
+
+  callActions: {
+    alignItems: "center",
+  },
+
+  activeIndicator: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: "#FFFFFF",
+    marginBottom: 4,
+  },
+
+  pulseDot: {
+    width: "100%",
+    height: "100%",
+    borderRadius: 6,
+    backgroundColor: "#FFFFFF",
+  },
+
+  tapToReturn: {
+    fontSize: 10,
+    color: "#FFFFFF",
+    opacity: 0.7,
+  },
+
+  // Incoming call styles
+  incomingCallContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+
+  callerInfo: {
+    flexDirection: "row",
+    alignItems: "center",
+    flex: 1,
+  },
+
+  callerDetails: {
+    marginLeft: 12,
+  },
+
+  incomingText: {
+    fontSize: 12,
+    color: "#CCCCCC",
+    marginBottom: 2,
+  },
+
+  callerName: {
+    fontSize: 16,
+    fontWeight: "bold",
+    color: "#FFFFFF",
+  },
+
+  incomingActions: {
+    flexDirection: "row",
+    gap: 20,
+  },
+
+  rejectButton: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    backgroundColor: "#dc3545",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+
+  acceptButton: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    backgroundColor: "#28a745",
+    justifyContent: "center",
+    alignItems: "center",
   },
 });
