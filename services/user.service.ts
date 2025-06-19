@@ -683,7 +683,7 @@ export const userService = {
       // Try different endpoints with proper parameters
       const endpoints = [
         {
-          path: `/calls/initiate`,
+          path: `/call/initiate`,
           body: {
             appointmentId,
             patientId: userData.id,

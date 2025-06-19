@@ -244,6 +244,40 @@ export const useChat = ({
     }
   };
 
+  const handleVideoCall = useCallback(async () => {
+    if (!room) {
+      console.warn("⚠️ No room available for video call");
+      onError?.("No chat room available");
+      return;
+    }
+
+    try {
+      console.log("📞 Starting video call...");
+      console.log("📞 Room ID:", room._id);
+      console.log("📞 Doctor ID:", doctorId);
+
+      // Connect to call service if not connected
+      await chatService.connectCallService();
+
+      // Get the other participant (doctor) ID
+      const otherParticipant = chatService.getOtherParticipant(
+        room,
+        currentUserId
+      );
+      console.log("📞 Calling to:", otherParticipant);
+
+      // Initiate video call
+      const callId = await chatService.initiateVideoCall(
+        otherParticipant.id,
+        room._id
+      );
+      console.log("📞 Video call initiated with ID:", callId);
+    } catch (error) {
+      console.error("❌ Error starting video call:", error);
+      onError?.(`Failed to start video call: ${error.message}`);
+    }
+  }, [room, doctorId, currentUserId, onError]);
+
   return {
     messages,
     room,
@@ -255,5 +289,6 @@ export const useChat = ({
     onlineCount,
     initializeChat,
     sendMessage,
+    handleVideoCall,
   };
 };

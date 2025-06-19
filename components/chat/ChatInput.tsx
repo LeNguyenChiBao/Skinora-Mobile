@@ -3,6 +3,7 @@ import React, { useState } from "react";
 import {
   ActivityIndicator,
   StyleSheet,
+  Text,
   TextInput,
   TouchableOpacity,
   View,
@@ -11,6 +12,7 @@ import {
 interface ChatInputProps {
   onSendMessage: (text: string) => void;
   onAttachFile: () => void;
+  onVideoCall: () => void;
   isConnected: boolean;
   isSending: boolean;
 }
@@ -18,6 +20,7 @@ interface ChatInputProps {
 export const ChatInput: React.FC<ChatInputProps> = ({
   onSendMessage,
   onAttachFile,
+  onVideoCall,
   isConnected,
   isSending,
 }) => {
@@ -30,98 +33,167 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     setInputText("");
   };
 
-  console.log("💬 [ChatInput] Connection state:", {
-    isConnected,
-    isSending,
-    canSend: !isSending && isConnected,
-    inputValue: inputText.trim(),
-    canSendMessage: !isSending && isConnected && inputText.trim().length > 0,
-  });
+  const canSendMessage =
+    inputText.trim().length > 0 && isConnected && !isSending;
 
   return (
-    <View style={styles.inputContainer}>
-      <TouchableOpacity
-        style={styles.attachButton}
-        onPress={onAttachFile}
-        disabled={!isConnected}
-      >
-        <Ionicons
-          name="add"
-          size={24}
-          color={isConnected ? "#00A86B" : "#999"}
-        />
-      </TouchableOpacity>
-
-      <View style={styles.textInputContainer}>
+    <View style={styles.container}>
+      <View style={styles.inputContainer}>
         <TextInput
           style={styles.textInput}
           value={inputText}
           onChangeText={setInputText}
-          placeholder={isConnected ? "Nhập tin nhắn..." : "Đang kết nối..."}
+          placeholder="Nhập tin nhắn..."
           placeholderTextColor="#999"
           multiline
           maxLength={1000}
-          editable={isConnected}
+          editable={!isSending && isConnected}
         />
+
+        <View style={styles.actionsContainer}>
+          {/* Video Call Button */}
+          {onVideoCall && (
+            <TouchableOpacity
+              style={[
+                styles.actionButton,
+                (!isConnected || isSending) && styles.disabledButton,
+              ]}
+              onPress={() => {
+                console.log("📞 Video call button pressed");
+                onVideoCall();
+              }}
+              disabled={!isConnected || isSending}
+            >
+              <Ionicons
+                name="videocam"
+                size={24}
+                color={!isConnected || isSending ? "#ccc" : "#007AFF"}
+              />
+            </TouchableOpacity>
+          )}
+
+          {/* Attach File Button */}
+          {onAttachFile && (
+            <TouchableOpacity
+              style={[
+                styles.actionButton,
+                (!isConnected || isSending) && styles.disabledButton,
+              ]}
+              onPress={onAttachFile}
+              disabled={!isConnected || isSending}
+            >
+              <Ionicons
+                name="attach"
+                size={24}
+                color={!isConnected || isSending ? "#ccc" : "#007AFF"}
+              />
+            </TouchableOpacity>
+          )}
+
+          {/* Send Button */}
+          <TouchableOpacity
+            style={[
+              styles.sendButton,
+              canSendMessage
+                ? styles.enabledSendButton
+                : styles.disabledSendButton,
+            ]}
+            onPress={handleSend}
+            disabled={!canSendMessage}
+          >
+            {isSending ? (
+              <ActivityIndicator size="small" color="#FFF" />
+            ) : (
+              <Ionicons name="send" size={20} color="#FFF" />
+            )}
+          </TouchableOpacity>
+        </View>
       </View>
 
-      <TouchableOpacity
-        style={[
-          styles.sendButton,
-          (isSending || !isConnected) && { opacity: 0.6 },
-        ]}
-        onPress={handleSend}
-        disabled={isSending || inputText.trim() === "" || !isConnected}
-      >
-        {isSending ? (
-          <ActivityIndicator size={16} color="#FFFFFF" />
-        ) : (
-          <Ionicons name="send" size={20} color="#FFFFFF" />
-        )}
-      </TouchableOpacity>
+      {/* Connection Status */}
+      <View style={styles.statusContainer}>
+        <View style={styles.statusIndicator}>
+          <View
+            style={[
+              styles.statusDot,
+              { backgroundColor: isConnected ? "#4CAF50" : "#FF5722" },
+            ]}
+          />
+          <Text style={styles.statusText}>
+            {isConnected ? "🟢 Đã kết nối" : "🔴 Đang kết nối..."}
+          </Text>
+        </View>
+      </View>
     </View>
   );
 };
 
 const styles = StyleSheet.create({
-  inputContainer: {
-    flexDirection: "row",
-    alignItems: "flex-end",
-    backgroundColor: "#FFFFFF",
+  container: {
+    backgroundColor: "#FFF",
     paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingVertical: 8,
     borderTopWidth: 1,
     borderTopColor: "#E0E0E0",
   },
-  attachButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: "#F0F0F0",
-    justifyContent: "center",
-    alignItems: "center",
-    marginRight: 8,
-  },
-  textInputContainer: {
-    flex: 1,
-    backgroundColor: "#F0F0F0",
+  inputContainer: {
+    flexDirection: "row",
+    alignItems: "flex-end",
+    backgroundColor: "#F5F5F5",
     borderRadius: 20,
     paddingHorizontal: 16,
-    paddingVertical: 10,
-    marginRight: 8,
-    maxHeight: 100,
+    paddingVertical: 8,
   },
   textInput: {
+    flex: 1,
+    maxHeight: 100,
     fontSize: 16,
     color: "#333",
-    maxHeight: 80,
+    paddingVertical: 8,
+  },
+  actionsContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginLeft: 8,
+    gap: 8,
+  },
+  actionButton: {
+    padding: 8,
+    borderRadius: 20,
+    backgroundColor: "#F0F0F0",
+  },
+  disabledButton: {
+    opacity: 0.5,
   },
   sendButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: "#00A86B",
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     justifyContent: "center",
     alignItems: "center",
+  },
+  enabledSendButton: {
+    backgroundColor: "#007AFF",
+  },
+  disabledSendButton: {
+    backgroundColor: "#CCC",
+  },
+  statusContainer: {
+    marginTop: 8,
+  },
+  statusIndicator: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  statusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginRight: 8,
+  },
+  statusText: {
+    fontSize: 12,
+    color: "#666",
   },
 });

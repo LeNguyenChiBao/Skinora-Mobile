@@ -10,6 +10,7 @@ import { useEffect, useState } from "react";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import "react-native-reanimated";
 
+import { CallManager } from "@/components/CallManager";
 import { useColorScheme } from "@/hooks/useColorScheme";
 import { authService } from "@/services/authServices.service";
 
@@ -38,7 +39,6 @@ export default function RootLayout() {
     // Show loading while checking auth status
     return null;
   }
-
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <ThemeProvider value={colorScheme === "dark" ? DarkTheme : DefaultTheme}>
@@ -53,6 +53,8 @@ export default function RootLayout() {
             <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
             <Stack.Screen name="+not-found" />
           </Stack>
+          {/* Initialize call manager only when logged in */}
+          {isLoggedIn && <CallManager />}
         </>
         <StatusBar style="auto" />
       </ThemeProvider>

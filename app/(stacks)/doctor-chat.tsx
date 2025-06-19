@@ -17,6 +17,7 @@ import {
 import { ChatInput } from "@/components/chat/ChatInput";
 import { MessageList } from "@/components/chat/MessageList";
 import { useChat } from "@/hooks/useChat";
+import { useVoiceCall } from "@/hooks/useVoiceCall";
 import chatService from "@/services/chat.service";
 import { CloudinaryService } from "@/services/cloudinaryService";
 
@@ -27,6 +28,16 @@ export default function DoctorChatScreen() {
 
   const [seenMessageIds, setSeenMessageIds] = useState<Set<string>>(new Set());
   const [isUploadingImage, setIsUploadingImage] = useState(false);
+
+  // Initialize voice call hook
+  const {
+    initializeVoiceCall,
+    initializeVideoCall,
+    isInitiating: isInitiatingCall,
+  } = useVoiceCall({
+    doctorId: doctorId as string,
+    doctorName: doctorName as string,
+  });
 
   const {
     messages,
@@ -150,6 +161,46 @@ export default function DoctorChatScreen() {
       setIsUploadingImage(false);
     }
   };
+  const handleVoiceCall = async () => {
+    if (!room) {
+      Alert.alert("Lỗi", "Không tìm thấy phòng chat");
+      return;
+    }
+
+    try {
+      console.log("📞 Starting voice call...");
+
+      // Get the doctor ID
+      const doctorId = room.doctorId._id;
+      console.log("📞 Voice calling to doctor:", doctorId);
+
+      // Use the voice call hook
+      await initializeVoiceCall(doctorId);
+    } catch (error: any) {
+      console.error("❌ Error starting voice call:", error);
+      // Error is already handled in the hook
+    }
+  };
+  const handleVideoCall = async () => {
+    if (!room) {
+      Alert.alert("Lỗi", "Không tìm thấy phòng chat");
+      return;
+    }
+
+    try {
+      console.log("📞 Starting video call...");
+
+      // Get the doctor ID
+      const doctorId = room.doctorId._id;
+      console.log("📞 Video calling to doctor:", doctorId);
+
+      // Use the video call hook
+      await initializeVideoCall(doctorId);
+    } catch (error: any) {
+      console.error("❌ Error starting video call:", error);
+      // Error is already handled in the hook
+    }
+  };
 
   if (isLoading) {
     return (
@@ -205,11 +256,28 @@ export default function DoctorChatScreen() {
           </View>
 
           <View style={styles.headerActions}>
-            <TouchableOpacity style={styles.headerButton}>
-              <Ionicons name="call" size={20} color="#FFFFFF" />
+            {" "}
+            <TouchableOpacity
+              style={styles.headerButton}
+              onPress={handleVoiceCall}
+              disabled={!isConnected || isInitiatingCall}
+            >
+              <Ionicons
+                name="call"
+                size={20}
+                color={isConnected && !isInitiatingCall ? "#FFFFFF" : "#CCCCCC"}
+              />
             </TouchableOpacity>
-            <TouchableOpacity style={styles.headerButton}>
-              <Ionicons name="videocam" size={20} color="#FFFFFF" />
+            <TouchableOpacity
+              style={styles.headerButton}
+              onPress={handleVideoCall}
+              disabled={!isConnected || isInitiatingCall}
+            >
+              <Ionicons
+                name="videocam"
+                size={20}
+                color={isConnected && !isInitiatingCall ? "#FFFFFF" : "#CCCCCC"}
+              />
             </TouchableOpacity>
           </View>
         </View>
@@ -224,11 +292,11 @@ export default function DoctorChatScreen() {
             messages={messages}
             currentUserId={currentUserId}
             seenMessageIds={seenMessageIds}
-          />
-
+          />{" "}
           <ChatInput
             onSendMessage={sendMessage}
             onAttachFile={showAttachmentOptions}
+            onVideoCall={handleVideoCall}
             isConnected={isConnected}
             isSending={isSending || isUploadingImage}
           />

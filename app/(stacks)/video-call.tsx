@@ -1,6 +1,8 @@
 import { useCallIndicatorStore } from "@/hooks/useCallIndicator";
+import { useCallService } from "@/hooks/useCallService";
+import { useIncomingCalls } from "@/hooks/useIncomingCalls";
 import { useNotifications } from "@/hooks/useNotifications";
-import chatService from "@/services/chat.service";
+import callService from "@/services/call.service";
 import { userService } from "@/services/user.service";
 import { Ionicons } from "@expo/vector-icons";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
@@ -18,12 +20,12 @@ import {
 } from "react-native";
 
 // Try to import Agora, handle if not available
-let RtcEngine,
-  RtcLocalView,
-  RtcRemoteView,
-  VideoRenderMode,
-  ChannelProfile,
-  ClientRole;
+let RtcEngine: any,
+  RtcLocalView: any,
+  RtcRemoteView: any,
+  VideoRenderMode: any,
+  ChannelProfile: any,
+  ClientRole: any;
 let AGORA_AVAILABLE = false;
 
 try {
@@ -73,7 +75,10 @@ try {
       AGORA_AVAILABLE = false;
     }
   } catch (importError) {
-    console.error("Failed to import react-native-agora:", importError.message);
+    console.error(
+      "Failed to import react-native-agora:",
+      (importError as any)?.message
+    );
     AGORA_AVAILABLE = false;
   }
 
@@ -97,7 +102,7 @@ try {
         }
       });
     } catch (e) {
-      console.log("Manual inspection failed:", e.message);
+      console.log("Manual inspection failed:", (e as any)?.message);
     }
   }
 } catch (error) {
@@ -111,6 +116,7 @@ export default function VideoCallScreen() {
   const router = useRouter();
   const {
     appointmentId,
+    callId, // Add callId for chat-based calls
     doctorId,
     doctorName,
     callerId,
@@ -123,8 +129,12 @@ export default function VideoCallScreen() {
     isReturning,
     callType,
     isJoining,
+    isInitiator, // Add isInitiator for chat-based calls
+    otherParticipantName, // Add for chat-based calls
+    otherParticipantAvatar, // Add for chat-based calls
   } = useLocalSearchParams();
   const { endCall } = useNotifications();
+  const { clearCallState } = useIncomingCalls(); // Add hook to clear call state
   const {
     startCall: startCallIndicator,
     endCall: endCallIndicator,
@@ -145,6 +155,11 @@ export default function VideoCallScreen() {
   const [isLoading, setIsLoading] = useState(true);
   const [remoteUsers, setRemoteUsers] = useState<number[]>([]); // Track all remote users
   const [localUid, setLocalUid] = useState<number | null>(null); // Track our own UID
+  const [isPiPMode, setIsPiPMode] = useState(false);
+  const [isMinimized, setIsMinimized] = useState(false);
+
+  // Initialize call service for background handling
+  const callServiceHook = useCallService();
 
   // Use real Agora config from backend
   // const agoraAppId = appId as string;
@@ -160,7 +175,11 @@ export default function VideoCallScreen() {
       setTimeout(() => {
         console.log("Starting call indicator in useLayoutEffect");
         startCallIndicator({
-          participantName: doctorName || callerName || "Bác sĩ",
+          participantName: Array.isArray(doctorName)
+            ? doctorName[0]
+            : Array.isArray(callerName)
+            ? callerName[0]
+            : (doctorName as string) || (callerName as string) || "Bác sĩ",
           appointmentId: appointmentId as string,
           callData: {
             appointmentId: appointmentId,
@@ -179,9 +198,15 @@ export default function VideoCallScreen() {
   useEffect(() => {
     console.log("Video call params received:", {
       appointmentId,
+      appointmentIdType: typeof appointmentId,
+      appointmentIdValue: appointmentId,
+      callId,
+      callIdType: typeof callId,
+      callIdValue: callId,
       doctorName,
       callType,
       isJoining,
+      isInitiator,
       isReturning: !!isReturning,
       globalCallDuration,
     });
@@ -189,295 +214,407 @@ export default function VideoCallScreen() {
     // If returning to session, sync with global duration
     if (isReturning) {
       console.log("Skipping initialization - returning to existing session");
-      setCallDuration(globalCallDuration);
-      setIsLoading(false);
-      // Set demo mode state if needed - wrap in setTimeout
-      if (!AGORA_AVAILABLE) {
-        setTimeout(() => {
-          setIsJoined(true);
-          setRemoteUid(12345);
-          setCallStatus("Demo: Đã kết nối với bác sĩ");
-        }, 0);
-      }
+      // Wrap state updates in setTimeout to avoid setState during render
+      setTimeout(() => {
+        setCallDuration(globalCallDuration);
+        setIsLoading(false);
+        // Only set state if Agora is properly available and connected
+        if (!AGORA_AVAILABLE) {
+          console.error("❌ Returning to session but Agora not available");
+          Alert.alert(
+            "Lỗi Agora SDK",
+            "Không thể quay lại phiên gọi vì Agora SDK không khả dụng.",
+            [{ text: "Quay lại", onPress: () => router.back() }]
+          );
+        }
+      }, 0);
       return;
     }
-
-    console.log("AGORA_AVAILABLE:", AGORA_AVAILABLE);
-
-    // Always start with demo mode if Agora not available
+    // Never fallback to demo mode - always require real Agora
     if (!AGORA_AVAILABLE) {
-      console.log("Starting demo mode automatically - Agora not available");
-      setIsLoading(false);
-      // Wrap in setTimeout to avoid setState during render
+      console.error("❌ Agora SDK not available - cannot proceed");
       setTimeout(() => {
-        startDemoMode();
+        setIsLoading(false);
+        Alert.alert(
+          "Lỗi SDK Agora",
+          "Không thể tải SDK Agora. Vui lòng kiểm tra cài đặt ứng dụng và thử lại.",
+          [
+            {
+              text: "Thử lại",
+              onPress: () => {
+                // Force app restart/reload
+                console.log("Restarting app to retry Agora initialization");
+                router.back();
+              },
+            },
+            { text: "Quay lại", onPress: () => router.back() },
+          ]
+        );
       }, 0);
       return;
     }
 
     // Initialize call with backend API
-    initializeCallFromBackend();
+    if (appointmentId) {
+      // Appointment-based call
+      initializeAppointmentCall(appointmentId as string);
+    } else if (callId) {
+      // Chat-based call
+      initializeChatCall(callId as string);
+    } else {
+      console.error("❌ No valid ID provided for call initialization");
+      Alert.alert("Lỗi", "Không có ID cuộc gọi hợp lệ", [
+        { text: "Quay lại", onPress: () => router.back() },
+      ]);
+    }
   }, []); // Remove dependencies to prevent re-runs
 
-  const initializeCallFromBackend = async () => {
-    try {
-      setIsLoading(true);
-      console.log("🚀 Initializing call for appointment:", appointmentId);
+  // Cleanup call state when component unmounts
+  useEffect(() => {
+    return () => {
+      console.log("🧹 Video call component unmounting, clearing call state");
+      clearCallState();
+    };
+  }, [clearCallState]);
 
-      if (!appointmentId) {
-        throw new Error("Missing appointment ID");
-      }
+  // Helper function for appointment-based calls
+  const initializeAppointmentCall = async (appointmentId: string) => {
+    console.log("🔍 Checking for active call...");
+    const activeCallResponse = await userService.checkActiveCall();
 
-      // Step 1: Check for active call first
-      console.log("🔍 Checking for active call...");
-      const activeCallResponse = await userService.checkActiveCall();
+    if (activeCallResponse.success && activeCallResponse.data.hasActiveCall) {
+      const activeCall = activeCallResponse.data.activeCall;
+      console.log("📞 Found active call:", activeCall);
 
-      if (activeCallResponse.success && activeCallResponse.data.hasActiveCall) {
-        const activeCall = activeCallResponse.data.activeCall;
-        console.log("📞 Found active call:", activeCall);
+      // Fix: Compare appointmentId correctly - handle both string and object formats
+      const activeCallAppointmentId =
+        typeof activeCall.appointmentId === "string"
+          ? activeCall.appointmentId
+          : activeCall.appointmentId?._id;
 
-        // Fix: Compare appointmentId correctly - handle both string and object formats
-        const activeCallAppointmentId =
-          typeof activeCall.appointmentId === "string"
-            ? activeCall.appointmentId
-            : activeCall.appointmentId?._id;
+      console.log("🔍 APPOINTMENT ID COMPARISON:");
+      console.log("   Current appointment:", appointmentId);
+      console.log("   Active call appointment:", activeCallAppointmentId);
+      console.log("   Match:", activeCallAppointmentId === appointmentId);
 
-        console.log("🔍 APPOINTMENT ID COMPARISON:");
-        console.log("   Current appointment:", appointmentId);
+      // Check if active call matches current appointment
+      if (activeCallAppointmentId === appointmentId) {
+        console.log(
+          "✅ Active call matches current appointment - joining existing call"
+        );
+
+        // Join existing call instead of starting new one
+        const response = await userService.joinCall(appointmentId);
+
+        if (response.success) {
+          const callInfo = response.data;
+          setCallData(callInfo);
+
+          console.log("📋 Joined existing call data:", {
+            callId: callInfo.callId,
+            channel: callInfo.channelName,
+            uid: callInfo.patientUid || (callInfo as any).uid,
+            tokenLength:
+              callInfo.patientToken?.length || (callInfo as any).token?.length,
+          });
+
+          await initAgoraWithApiData(callInfo);
+        } else {
+          throw new Error(response.message || "Failed to join existing call");
+        }
+        return;
+      } else {
+        console.log(
+          "⚠️ Active call for different appointment, ending it first"
+        );
         console.log("   Active call appointment:", activeCallAppointmentId);
-        console.log("   Match:", activeCallAppointmentId === appointmentId);
+        console.log("   Current appointment:", appointmentId);
 
-        // Check if active call matches current appointment
-        if (activeCallAppointmentId === appointmentId) {
-          console.log(
-            "✅ Active call matches current appointment - joining existing call"
+        // Show user a choice: join existing call or end it
+        const shouldJoinExisting = await new Promise<boolean>((resolve) => {
+          Alert.alert(
+            "Cuộc gọi đang diễn ra",
+            `Bạn đang có cuộc gọi khác. Bạn muốn:\n• Tham gia cuộc gọi hiện tại\n• Kết thúc và bắt đầu cuộc gọi mới`,
+            [
+              {
+                text: "Tham gia cuộc gọi hiện tại",
+                onPress: () => resolve(true),
+              },
+              {
+                text: "Kết thúc và bắt đầu mới",
+                onPress: () => resolve(false),
+                style: "destructive",
+              },
+            ]
           );
+        });
 
-          // Join existing call instead of starting new one
-          const response = await userService.joinCall(appointmentId as string);
+        if (shouldJoinExisting) {
+          // Join the existing call for its appointment
+          console.log("🔀 User chose to join existing call");
+          const response = await userService.joinCall(activeCallAppointmentId);
 
           if (response.success) {
             const callInfo = response.data;
             setCallData(callInfo);
-
-            console.log("📋 Joined existing call data:", {
-              callId: callInfo.callId,
-              channel: callInfo.channelName,
-              uid: callInfo.patientUid || callInfo.uid,
-              tokenLength:
-                callInfo.patientToken?.length || callInfo.token?.length,
-            });
-
             await initAgoraWithApiData(callInfo);
+            return;
           } else {
-            throw new Error(response.message || "Failed to join existing call");
+            throw new Error("Failed to join existing call");
           }
-          return;
         } else {
-          console.log(
-            "⚠️ Active call for different appointment, ending it first"
-          );
-          console.log("   Active call appointment:", activeCallAppointmentId);
-          console.log("   Current appointment:", appointmentId);
+          // End the existing call before starting new one
+          try {
+            console.log("🔚 Ending existing call:", activeCall._id);
+            await userService.endCall(activeCall._id);
+            console.log("✅ Successfully ended existing call");
 
-          // Show user a choice: join existing call or end it
-          const shouldJoinExisting = await new Promise<boolean>((resolve) => {
-            Alert.alert(
-              "Cuộc gọi đang diễn ra",
-              `Bạn đang có cuộc gọi khác. Bạn muốn:\n• Tham gia cuộc gọi hiện tại\n• Kết thúc và bắt đầu cuộc gọi mới`,
-              [
-                {
-                  text: "Tham gia cuộc gọi hiện tại",
-                  onPress: () => resolve(true),
-                },
-                {
-                  text: "Kết thúc và bắt đầu mới",
-                  onPress: () => resolve(false),
-                  style: "destructive",
-                },
-              ]
-            );
-          });
-
-          if (shouldJoinExisting) {
-            // Join the existing call for its appointment
-            console.log("🔀 User chose to join existing call");
-            const response = await userService.joinCall(
-              activeCallAppointmentId
-            );
-
-            if (response.success) {
-              const callInfo = response.data;
-              setCallData(callInfo);
-              await initAgoraWithApiData(callInfo);
-              return;
-            } else {
-              throw new Error("Failed to join existing call");
-            }
-          } else {
-            // End the existing call before starting new one
-            try {
-              console.log("🔚 Ending existing call:", activeCall._id);
-              await userService.endCall(activeCall._id);
-              console.log("✅ Successfully ended existing call");
-
-              // Wait a moment for backend to process
-              await new Promise((resolve) => setTimeout(resolve, 1000));
-            } catch (endError) {
-              console.warn("⚠️ Failed to end existing call:", endError);
-              // Continue anyway - maybe the call was already ended
-            }
+            // Wait a moment for backend to process
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+          } catch (endError) {
+            console.warn("⚠️ Failed to end existing call:", endError);
+            // Continue anyway - maybe the call was already ended
           }
         }
       }
+    }
 
-      // Step 2: No active call or successfully ended - start/create new call
-      let response;
-      if (isJoining === "true") {
-        console.log("🔗 Joining call (forced join mode)");
-        response = await userService.joinCall(appointmentId as string);
-      } else {
-        console.log("📞 Starting new call");
-        response = await userService.startCall(appointmentId as string, {
-          callType: (callType as "video" | "audio") || "video",
+    // Step 2: No active call or successfully ended - start/create new call
+    let response;
+    if (isJoining === "true") {
+      console.log("🔗 Joining call (forced join mode)");
+      response = await userService.joinCall(appointmentId);
+    } else {
+      console.log("📞 Starting new call");
+      response = await userService.startCall(appointmentId, {
+        callType: (callType as "video" | "audio") || "video",
+      });
+    }
+
+    if (response.success) {
+      const callInfo = response.data;
+      setCallData(callInfo);
+
+      console.log("📋 Call data received:", {
+        callId: callInfo.callId,
+        appId: callInfo.agoraAppId,
+        channel: callInfo.channelName,
+        uid: callInfo.patientUid || callInfo.uid,
+        tokenLength: callInfo.patientToken?.length || callInfo.token?.length,
+      });
+
+      // Normalize the response data structure
+      const normalizedCallInfo = {
+        ...callInfo,
+        // Use consistent field names
+        agoraAppId: callInfo.agoraAppId,
+        channelName: callInfo.channelName,
+        patientUid: callInfo.patientUid || callInfo.uid,
+        patientToken: callInfo.patientToken || callInfo.token,
+      };
+
+      // Validate required Agora parameters
+      if (
+        !normalizedCallInfo.agoraAppId ||
+        !normalizedCallInfo.channelName ||
+        !normalizedCallInfo.patientToken
+      ) {
+        console.error("Missing Agora fields:", {
+          agoraAppId: normalizedCallInfo.agoraAppId,
+          channelName: normalizedCallInfo.channelName,
+          token: normalizedCallInfo.patientToken,
+          uid: normalizedCallInfo.patientUid,
         });
-      }
+        throw new Error("Thiếu thông tin Agora từ server");
+      } // Initialize Agora with API data - using enhanced retry logic
+      await initAgoraWithApiDataEnhanced(normalizedCallInfo);
+    } else {
+      console.error("Error starting call:", response.message);
 
-      if (response.success) {
-        const callInfo = response.data;
-        setCallData(callInfo);
+      // Handle different error cases
+      if (response.message?.includes("No active call found")) {
+        console.log("🚨 No call session exists - need to create one");
 
-        console.log("📋 Call data received:", {
-          callId: callInfo.callId,
-          appId: callInfo.agoraAppId,
-          channel: callInfo.channelName,
-          uid: callInfo.patientUid || callInfo.uid,
-          tokenLength: callInfo.patientToken?.length || callInfo.token?.length,
-        });
-
-        // Normalize the response data structure
-        const normalizedCallInfo = {
-          ...callInfo,
-          // Use consistent field names
-          agoraAppId: callInfo.agoraAppId,
-          channelName: callInfo.channelName,
-          patientUid: callInfo.patientUid || callInfo.uid,
-          patientToken: callInfo.patientToken || callInfo.token,
-        };
-
-        // Validate required Agora parameters
-        if (
-          !normalizedCallInfo.agoraAppId ||
-          !normalizedCallInfo.channelName ||
-          !normalizedCallInfo.patientToken
-        ) {
-          console.error("Missing Agora fields:", {
-            agoraAppId: normalizedCallInfo.agoraAppId,
-            channelName: normalizedCallInfo.channelName,
-            token: normalizedCallInfo.patientToken,
-            uid: normalizedCallInfo.patientUid,
-          });
-          throw new Error("Thiếu thông tin Agora từ server");
-        }
-
-        // Initialize Agora with API data
-        await initAgoraWithApiData(normalizedCallInfo);
-      } else {
-        console.error("Error starting call:", response.message);
-
-        // Handle different error cases
-        if (response.message?.includes("No active call found")) {
-          console.log("🚨 No call session exists - need to create one");
-
-          // Check if this is an appointment that needs call creation
-          Alert.alert(
-            "Tạo cuộc gọi mới",
-            "Chưa có phiên gọi nào cho cuộc hẹn này. Tạo cuộc gọi mới?",
-            [
-              { text: "Hủy", onPress: () => router.back() },
-              {
-                text: "Tạo cuộc gọi",
-                onPress: async () => {
-                  try {
-                    console.log("🆕 Creating new call session...");
-
-                    // Try different approaches to create call
-                    let createResponse;
-
-                    // Method 1: Try direct call creation endpoint
-                    try {
-                      createResponse = await userService.createCall(
-                        appointmentId as string,
-                        {
-                          callType: (callType as "video" | "audio") || "video",
-                        }
-                      );
-                    } catch (createError) {
-                      console.log("Method 1 failed, trying method 2...");
-
-                      // Method 2: Try to force start call with different parameter
-                      createResponse = await userService.startCall(
-                        appointmentId as string,
-                        {
-                          callType: (callType as "video" | "audio") || "video",
-                          forceCreate: true,
-                        }
-                      );
+        // Check if this is an appointment that needs call creation
+        Alert.alert(
+          "Tạo cuộc gọi mới",
+          "Chưa có phiên gọi nào cho cuộc hẹn này. Tạo cuộc gọi mới?",
+          [
+            { text: "Hủy", onPress: () => router.back() },
+            {
+              text: "Tạo cuộc gọi",
+              onPress: async () => {
+                try {
+                  const createResponse = await userService.startCall(
+                    appointmentId,
+                    {
+                      callType: (callType as "video" | "audio") || "video",
+                      forceCreate: true,
                     }
+                  );
 
-                    if (createResponse.success) {
-                      console.log("✅ Call session created successfully");
-                      const callInfo = createResponse.data;
-                      setCallData(callInfo);
-
-                      // Validate the created call info
-                      if (
-                        callInfo.agoraAppId &&
-                        callInfo.channelName &&
-                        callInfo.patientToken
-                      ) {
-                        await initAgoraWithApiData(callInfo);
-                      } else {
-                        throw new Error("Created call missing Agora info");
-                      }
-                    } else {
-                      throw new Error(
-                        createResponse.message || "Failed to create call"
-                      );
-                    }
-                  } catch (createError) {
-                    console.error("❌ Failed to create call:", createError);
-                    Alert.alert(
-                      "Lỗi tạo cuộc gọi",
-                      `Không thể tạo cuộc gọi: ${createError.message}. Sử dụng demo mode?`,
-                      [
-                        { text: "Demo Mode", onPress: () => startDemoMode() },
-                        { text: "Quay lại", onPress: () => router.back() },
-                      ]
+                  if (createResponse.success) {
+                    const callInfo = createResponse.data;
+                    setCallData(callInfo);
+                    await initAgoraWithApiData(callInfo);
+                  } else {
+                    throw new Error(
+                      createResponse.message || "Failed to create call"
                     );
                   }
-                },
+                } catch (createError) {
+                  console.error("❌ Error creating call:", createError);
+                  Alert.alert(
+                    "Lỗi tạo cuộc gọi",
+                    `Không thể tạo cuộc gọi: ${
+                      (createError as any)?.message || "Unknown error"
+                    }`,
+                    [
+                      { text: "Quay lại", onPress: () => router.back() },
+                      {
+                        text: "Thử lại",
+                        onPress: () => initializeAppointmentCall(appointmentId),
+                      },
+                    ]
+                  );
+                }
               },
-            ]
-          );
-          return;
-        } else if (response.message?.includes("appointment not found")) {
-          Alert.alert(
-            "Lỗi cuộc hẹn",
-            "Không tìm thấy cuộc hẹn này. Vui lòng kiểm tra lại.",
-            [{ text: "Quay lại", onPress: () => router.back() }]
-          );
-          return;
-        } else if (response.message?.includes("not authorized")) {
-          Alert.alert(
-            "Không có quyền",
-            "Bạn không có quyền tham gia cuộc gọi này.",
-            [{ text: "Quay lại", onPress: () => router.back() }]
-          );
-          return;
-        }
+            },
+          ]
+        );
+      } else {
+        // For other errors, show the original error message
+        Alert.alert(
+          "Lỗi kết nối",
+          response.message || "Không thể kết nối đến server",
+          [
+            { text: "Quay lại", onPress: () => router.back() },
+            {
+              text: "Thử lại",
+              onPress: () => {
+                setIsLoading(true);
+                initializeAppointmentCall(appointmentId);
+              },
+            },
+          ]
+        );
+      }
+    }
+  }; // Helper function for chat-based calls
+  const initializeChatCall = async (callId: string) => {
+    console.log("📞 Initializing chat-based call with ID:", callId);
 
-        throw new Error(response.message || "Failed to get call details");
+    try {
+      // First get call details to understand the call
+      const callDetails = await callService.getCallDetails(callId);
+      console.log("📋 Chat call details:", callDetails); // Then join the call to get Agora connection data
+      const joinResult = await callService.joinCall(callId);
+      console.log("🔗 Join call result:", joinResult);
+      console.log("🔍 Join result keys:", Object.keys(joinResult || {}));
+      console.log(
+        "🔍 Join result structure:",
+        JSON.stringify(joinResult, null, 2)
+      ); // Transform join result data to match expected format
+      const normalizedCallInfo = {
+        callId: callDetails._id,
+        agoraAppId: joinResult.agoraAppId || joinResult.agoraConfig?.appId,
+        channelName: joinResult.channelName || joinResult.roomId,
+        patientUid: joinResult.uid || joinResult.patientUid,
+        patientToken: joinResult.token || joinResult.patientToken,
+        userRole: joinResult.userRole || callDetails.userRole,
+        // Add appointment/doctor info for chat calls
+        appointmentId: callDetails.appointmentId || callId,
+        doctorInfo: {
+          id: callDetails.doctorId,
+          name: otherParticipantName || "Bác sĩ",
+          avatar: otherParticipantAvatar || "",
+        },
+      };
+
+      console.log("🔍 AGORA DEBUG INFO:");
+      console.log("📋 App ID:", normalizedCallInfo.agoraAppId);
+      console.log("📋 Channel Name:", normalizedCallInfo.channelName);
+      console.log("📋 Patient UID:", normalizedCallInfo.patientUid);
+      console.log("📋 Token Length:", normalizedCallInfo.patientToken?.length);
+      console.log(
+        "📋 Token First 20 chars:",
+        normalizedCallInfo.patientToken?.substring(0, 20)
+      );
+
+      setCallData(normalizedCallInfo);
+      await initAgoraWithApiData(normalizedCallInfo);
+    } catch (error: any) {
+      console.error("❌ Error getting chat call details:", error);
+      Alert.alert(
+        "Lỗi cuộc gọi",
+        `Không thể tham gia cuộc gọi: ${error?.message || "Unknown error"}`,
+        [
+          { text: "Quay lại", onPress: () => router.back() },
+          {
+            text: "Thử lại",
+            onPress: () => initializeChatCall(callId as string),
+          },
+        ]
+      );
+    }
+  };
+
+  const initializeCallFromBackend = async () => {
+    try {
+      setIsLoading(true);
+
+      // Determine which ID to use - priority: appointmentId > callId
+      const effectiveId = appointmentId || callId;
+      const idType = appointmentId ? "appointment" : "call";
+
+      console.log("🚀 Initializing call:", {
+        effectiveId,
+        idType,
+        appointmentId,
+        callId,
+      });
+      console.log("🔍 All params:", {
+        appointmentId,
+        callId,
+        doctorId,
+        doctorName,
+        callType,
+        isJoining,
+        isInitiator,
+      });
+
+      if (!effectiveId || effectiveId === "" || effectiveId === "undefined") {
+        console.error("❌ Missing or invalid ID:", {
+          appointmentId,
+          callId,
+          effectiveId,
+          types: {
+            appointmentId: typeof appointmentId,
+            callId: typeof callId,
+            effectiveId: typeof effectiveId,
+          },
+          allParams: {
+            appointmentId,
+            callId,
+            doctorId,
+            doctorName,
+            callType,
+            isJoining,
+            isInitiator,
+          },
+        });
+        throw new Error(
+          `Missing both appointment ID and call ID. Received appointmentId: ${appointmentId}, callId: ${callId}`
+        );
+      } // Handle different call types
+      if (appointmentId) {
+        // Appointment-based call
+        await initializeAppointmentCall(appointmentId as string);
+      } else if (callId) {
+        // Chat-based call
+        await initializeChatCall(callId as string);
+      } else {
+        throw new Error("No valid ID provided for call initialization");
       }
     } catch (error) {
       console.error("❌ Failed to initialize call:", error);
@@ -485,7 +622,9 @@ export default function VideoCallScreen() {
       // Show error with fallback options
       Alert.alert(
         "Lỗi kết nối",
-        `Không thể tham gia cuộc gọi: ${error.message}`,
+        `Không thể tham gia cuộc gọi: ${
+          (error as any)?.message || "Unknown error"
+        }`,
         [
           {
             text: "Demo mode",
@@ -508,7 +647,6 @@ export default function VideoCallScreen() {
       setIsLoading(false);
     }
   };
-
   // Separate useEffect for timer - only start if not returning
   useEffect(() => {
     // Don't start new timer if returning to existing session
@@ -556,18 +694,25 @@ export default function VideoCallScreen() {
       console.log(
         "📋 Token First 20 chars:",
         callInfo.patientToken?.substring(0, 20)
-      );
-
-      // Log channel comparison - now we expect callId-based channel
+      ); // Log channel comparison - now we expect callId-based channel OR timestamp-based channel
       console.log("🔍 CHANNEL NAME INFO:");
       console.log("   Backend Channel:", callInfo.channelName);
       console.log("   Call ID:", callInfo.callId);
       console.log("   Appointment ID:", appointmentId);
 
-      // Channel should be based on callId, not appointmentId
-      const expectedChannelPattern = /^skinora_call_[a-f0-9]{24}$/;
-      const isValidChannel = expectedChannelPattern.test(callInfo.channelName);
+      // Channel can be either:
+      // 1. callId-based: skinora_call_[callId]
+      // 2. timestamp-based: call_[timestamp]_[randomString]
+      const callIdChannelPattern = /^skinora_call_[a-f0-9]{24}$/;
+      const timestampChannelPattern = /^call_\d+_[a-z0-9]+$/;
+      const isValidChannel =
+        callIdChannelPattern.test(callInfo.channelName) ||
+        timestampChannelPattern.test(callInfo.channelName);
       console.log("   Valid channel format:", isValidChannel);
+      console.log("   Channel pattern matches:", {
+        callIdPattern: callIdChannelPattern.test(callInfo.channelName),
+        timestampPattern: timestampChannelPattern.test(callInfo.channelName),
+      });
 
       console.log("Initializing Agora with API data:", {
         appId: callInfo.agoraAppId,
@@ -575,103 +720,236 @@ export default function VideoCallScreen() {
         hasToken: !!callInfo.patientToken,
         uid: callInfo.patientUid,
       });
-
       console.log("Creating RTC engine...");
 
       // Create RTC engine - handle different API versions
-      let _engine;
-      if (RtcEngine.create) {
+      console.log(
+        "🚀 Creating Agora RTC engine with App ID:",
+        callInfo.agoraAppId
+      );
+
+      let _engine: any;
+      if (RtcEngine.createAgoraRtcEngine) {
+        // For SDK 4.x+, use the new creation method
+        _engine = RtcEngine.createAgoraRtcEngine();
+        console.log("✅ Engine created using createAgoraRtcEngine()");
+      } else if (RtcEngine.create) {
         _engine = await RtcEngine.create(callInfo.agoraAppId);
+        console.log("✅ Engine created using RtcEngine.create()");
       } else if (typeof RtcEngine === "function") {
         _engine = await RtcEngine(callInfo.agoraAppId);
+        console.log("✅ Engine created using RtcEngine() function");
       } else {
         throw new Error("Unable to create RTC engine - unknown API pattern");
       }
-
       console.log("RTC engine created successfully");
-      setEngine(_engine);
-
       if (!_engine) {
-        console.warn(
-          "Engine creation returned null/undefined, falling back to demo"
+        console.error("❌ Engine creation returned null/undefined");
+        throw new Error(
+          "Không thể tạo Agora RTC engine. Vui lòng kiểm tra cấu hình SDK."
         );
-        startDemoMode();
-        return;
       }
 
-      // Enable audio first
+      // CRITICAL: Initialize the engine explicitly (required for SDK 4.x+)
+      console.log("🔧 CRITICAL: Initializing engine for SDK 4.x+...");
+      if (typeof _engine.initialize === "function") {
+        try {
+          // For SDK 4.x+, initialize() requires proper configuration
+          const initConfig = {
+            appId: callInfo.agoraAppId,
+            channelProfile: 1, // Communication mode
+            audioScenario: 0, // Default audio scenario
+          };
+
+          const initResult = await _engine.initialize(initConfig);
+          console.log("✅ Engine.initialize() result:", initResult);
+
+          // Check if initialization actually succeeded (0 = success, negative = error)
+          if (initResult !== 0) {
+            console.error(
+              "⚠️ Engine.initialize() returned error code:",
+              initResult
+            );
+            throw new Error(
+              `Engine initialization failed with code: ${initResult}. This is likely the cause of join failures.`
+            );
+          }
+
+          console.log("✅ Engine properly initialized with SDK 4.x+ config");
+        } catch (initError) {
+          console.error(
+            "❌ Engine.initialize() failed:",
+            (initError as any)?.message
+          );
+          throw initError;
+        }
+      } else {
+        console.log(
+          "ℹ️ Engine.initialize() not available - using older SDK version"
+        );
+      }
+
+      // Wait a moment for engine to fully initialize
+      console.log("⏳ Waiting for engine to initialize...");
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+
+      setEngine(_engine);
+
+      // 🔧 CRITICAL DIAGNOSIS: Check if the engine creation was actually successful
+      console.log("🔍 DETAILED ENGINE DIAGNOSIS:");
+      console.log("   Engine object:", !!_engine);
+      console.log("   Engine type:", typeof _engine);
+      console.log("   Engine constructor:", _engine.constructor?.name);
+      console.log("   Has initialize method:", typeof _engine.initialize);
+      console.log("   Has joinChannel method:", typeof _engine.joinChannel);
+      console.log("   Has enableAudio method:", typeof _engine.enableAudio);
+      console.log("   Has enableVideo method:", typeof _engine.enableVideo);
+
+      // Check if engine is in a valid state
+      try {
+        if (_engine.getConnectionState) {
+          const connectionState = await _engine.getConnectionState();
+          console.log("   Connection state:", connectionState);
+
+          // Connection state 5 = FAILED, which explains the issue!
+          if (connectionState === 5) {
+            console.error(
+              "🚨 ENGINE IN FAILED STATE - This explains the join failures!"
+            );
+            console.log("🔄 Attempting engine recovery...");
+
+            // Try to reset the engine state
+            try {
+              if (_engine.release) {
+                await _engine.release();
+                console.log("✅ Engine released");
+              }
+
+              // Create a fresh engine
+              console.log("🔄 Creating fresh engine...");
+              let freshEngine;
+              if (RtcEngine.create) {
+                freshEngine = await RtcEngine.create(callInfo.agoraAppId);
+              } else if (typeof RtcEngine === "function") {
+                freshEngine = await RtcEngine(callInfo.agoraAppId);
+              }
+
+              if (freshEngine) {
+                console.log("✅ Fresh engine created successfully");
+                _engine = freshEngine;
+                setEngine(freshEngine);
+              }
+            } catch (recoveryError) {
+              console.error(
+                "❌ Engine recovery failed:",
+                (recoveryError as any)?.message
+              );
+            }
+          }
+        }
+      } catch (stateError) {
+        console.log(
+          "   Connection state check failed:",
+          (stateError as any)?.message
+        );
+      } // Enable audio first
       try {
         await _engine.enableAudio();
         console.log("Audio enabled");
       } catch (e) {
-        console.warn("Audio enable failed:", e.message);
-      }
-
-      // Enable video
+        console.warn("Audio enable failed:", (e as any)?.message);
+      } // Enable video
       try {
         await _engine.enableVideo();
         console.log("Video enabled");
-      } catch (e) {
-        console.warn("Video enable failed:", e.message);
-      }
 
-      // Set channel profile to Communication
-      try {
-        if (ChannelProfile && _engine.setChannelProfile) {
-          await _engine.setChannelProfile(ChannelProfile.Communication || 1);
-          console.log("Channel profile set to Communication");
-        } else {
-          // Fallback for different SDK versions
-          await _engine.setChannelProfile(1); // 1 = Communication
-          console.log("Channel profile set to Communication (fallback)");
+        // Start local video preview immediately
+        try {
+          if (_engine.startPreview) {
+            await _engine.startPreview();
+            console.log("✅ Local video preview started");
+          }
+        } catch (previewError) {
+          console.warn("Local preview failed:", (previewError as any)?.message);
         }
       } catch (e) {
-        console.warn("Channel profile set failed:", e.message);
+        console.warn("Video enable failed:", (e as any)?.message);
       }
 
-      // Set client role to Broadcaster
-      try {
-        if (ClientRole && _engine.setClientRole) {
-          await _engine.setClientRole(ClientRole.Broadcaster || 1);
-          console.log("Client role set to Broadcaster");
-        } else {
-          // Fallback for different SDK versions
-          await _engine.setClientRole(1); // 1 = Broadcaster
-          console.log("Client role set to Broadcaster (fallback)");
+      // 🔧 CRITICAL FIX: For failed engines, try minimal configuration approach
+      const currentConnectionState = _engine.getConnectionState
+        ? await _engine.getConnectionState()
+        : null;
+      if (currentConnectionState === 5) {
+        console.log(
+          "🔧 Using minimal configuration for failed engine state..."
+        );
+
+        // Skip advanced settings for failed engines
+        console.log(
+          "⚠️ Skipping channel profile and client role due to failed state"
+        );
+      } else {
+        // Set channel profile to Communication
+        try {
+          if (ChannelProfile && _engine.setChannelProfile) {
+            await _engine.setChannelProfile(ChannelProfile.Communication || 1);
+            console.log("Channel profile set to Communication");
+          } else {
+            // Fallback for different SDK versions
+            await _engine.setChannelProfile(1); // 1 = Communication
+            console.log("Channel profile set to Communication (fallback)");
+          }
+        } catch (e) {
+          console.warn("Channel profile set failed:", (e as any)?.message);
         }
-      } catch (e) {
-        console.warn("Client role set failed:", e.message);
+
+        // Set client role to Broadcaster
+        try {
+          if (ClientRole && _engine.setClientRole) {
+            await _engine.setClientRole(ClientRole.Broadcaster || 1);
+            console.log("Client role set to Broadcaster");
+          } else {
+            // Fallback for different SDK versions
+            await _engine.setClientRole(1); // 1 = Broadcaster
+            console.log("Client role set to Broadcaster (fallback)");
+          }
+        } catch (e) {
+          console.warn("Client role set failed:", (e as any)?.message);
+        }
       }
 
       // Add event listeners with proper state management
       try {
-        _engine.addListener?.("JoinChannelSuccess", (channel, uid, elapsed) => {
-          console.log("✅ JoinChannelSuccess:");
-          console.log("   Channel:", channel);
-          console.log("   My UID:", uid);
-          console.log("   Elapsed:", elapsed);
+        _engine.addListener?.(
+          "JoinChannelSuccess",
+          (channel: any, uid: any, elapsed: any) => {
+            console.log("✅ JoinChannelSuccess:");
+            console.log("   Channel:", channel);
+            console.log("   My UID:", uid);
+            console.log("   Elapsed:", elapsed);
 
-          // Clear any pending timeout
-          if (_engine._joinTimeoutCleanup) {
-            _engine._joinTimeoutCleanup();
-            delete _engine._joinTimeoutCleanup;
+            // Clear any pending timeout
+            if (_engine._joinTimeoutCleanup) {
+              _engine._joinTimeoutCleanup();
+              delete _engine._joinTimeoutCleanup;
+            } // Use setTimeout to avoid setState during render
+            setTimeout(() => {
+              setIsLoading(false); // 🔧 CRITICAL: Stop loading state
+              setLocalUid(uid);
+              setIsJoined(true);
+
+              // Update status based on whether we have remote users
+              setCallStatus(
+                remoteUsers.length > 0
+                  ? "Đã kết nối"
+                  : "Đang chờ bác sĩ tham gia..."
+              );
+            }, 0);
           }
+        );
 
-          // Use setTimeout to avoid setState during render
-          setTimeout(() => {
-            setLocalUid(uid);
-            setIsJoined(true);
-
-            // Update status based on whether we have remote users
-            setCallStatus(
-              remoteUsers.length > 0
-                ? "Đã kết nối"
-                : "Đang chờ bác sĩ tham gia..."
-            );
-          }, 0);
-        });
-
-        _engine.addListener?.("UserJoined", (uid, elapsed) => {
+        _engine.addListener?.("UserJoined", (uid: any, elapsed: any) => {
           console.log("🎉 UserJoined - UID:", uid, "Elapsed:", elapsed);
           console.log("   Remote user joined successfully!");
 
@@ -685,14 +963,15 @@ export default function VideoCallScreen() {
             return prevUsers;
           });
 
-          // Update status
-          setCallStatus("Đã kết nối với bác sĩ");
-
-          // For backward compatibility, set the first remote user as remoteUid
-          setRemoteUid(uid);
+          // Update status with setTimeout to avoid setState during render
+          setTimeout(() => {
+            setCallStatus("Đã kết nối với bác sĩ");
+            // For backward compatibility, set the first remote user as remoteUid
+            setRemoteUid(uid);
+          }, 0);
         });
 
-        _engine.addListener?.("UserOffline", (uid, reason) => {
+        _engine.addListener?.("UserOffline", (uid: any, reason: any) => {
           console.log("👋 UserOffline - UID:", uid, "Reason:", reason);
 
           // Remove from remote users array
@@ -702,21 +981,26 @@ export default function VideoCallScreen() {
 
             // Update status based on remaining users
             if (newUsers.length === 0) {
-              setCallStatus("Bác sĩ đã rời khỏi cuộc gọi");
-              setRemoteUid(null);
+              setTimeout(() => {
+                setCallStatus("Bác sĩ đã rời khỏi cuộc gọi");
+                setRemoteUid(null);
+              }, 0);
             } else {
-              setCallStatus(`Đã kết nối với ${newUsers.length} người`);
-              // Set the first remaining user as primary remote
-              setRemoteUid(newUsers[0]);
+              setTimeout(() => {
+                setCallStatus(`Đã kết nối với ${newUsers.length} người`);
+                // Set the first remaining user as primary remote
+                setRemoteUid(newUsers[0]);
+              }, 0);
             }
 
             return newUsers;
           });
         });
-
-        _engine.addListener?.("Error", (errorCode, msg) => {
+        _engine.addListener?.("Error", (errorCode: any, msg: any) => {
           console.log("❌ Agora Error:", errorCode, msg);
-          setCallStatus("Lỗi kết nối");
+          setTimeout(() => {
+            setCallStatus("Lỗi kết nối");
+          }, 0);
 
           // Log detailed error info
           console.log("❌ DETAILED ERROR INFO:");
@@ -729,55 +1013,65 @@ export default function VideoCallScreen() {
           Alert.alert("Lỗi Agora", `Mã lỗi: ${errorCode}\n${msg || ""}`);
         });
 
-        _engine.addListener?.("Warning", (warningCode, msg) => {
+        _engine.addListener?.("Warning", (warningCode: any, msg: any) => {
           console.log("⚠️ Agora Warning:", warningCode, msg);
         });
 
-        _engine.addListener?.("ConnectionStateChanged", (state, reason) => {
-          console.log("🔗 Connection State Changed:", state, "Reason:", reason);
-
-          // Update status based on connection state
-          switch (state) {
-            case 1: // DISCONNECTED
-              setCallStatus("Mất kết nối");
-              break;
-            case 2: // CONNECTING
-              setCallStatus("Đang kết nối...");
-              break;
-            case 3: // CONNECTED
-              setCallStatus(
-                remoteUsers.length > 0 ? "Đã kết nối" : "Đang chờ bác sĩ..."
-              );
-              break;
-            case 4: // RECONNECTING
-              setCallStatus("Đang kết nối lại...");
-              break;
-            case 5: // FAILED
-              setCallStatus("Kết nối thất bại");
-              console.error(
-                "❌ Connection failed - attempting retry in 3 seconds"
-              );
-              setTimeout(() => {
-                console.log("🔄 Retrying channel join...");
-                initAgoraWithApiData(callInfo);
-              }, 3000);
-              break;
+        _engine.addListener?.(
+          "ConnectionStateChanged",
+          (state: any, reason: any) => {
+            console.log(
+              "🔗 Connection State Changed:",
+              state,
+              "Reason:",
+              reason
+            ); // Update status based on connection state
+            switch (state) {
+              case 1: // DISCONNECTED
+                setTimeout(() => setCallStatus("Mất kết nối"), 0);
+                break;
+              case 2: // CONNECTING
+                setTimeout(() => setCallStatus("Đang kết nối..."), 0);
+                break;
+              case 3: // CONNECTED
+                setTimeout(
+                  () =>
+                    setCallStatus(
+                      remoteUsers.length > 0
+                        ? "Đã kết nối"
+                        : "Đang chờ bác sĩ..."
+                    ),
+                  0
+                );
+                break;
+              case 4: // RECONNECTING
+                setTimeout(() => setCallStatus("Đang kết nối lại..."), 0);
+                break;
+              case 5: // FAILED
+                setTimeout(() => setCallStatus("Kết nối thất bại"), 0);
+                console.error(
+                  "❌ Connection failed - attempting retry in 3 seconds"
+                );
+                setTimeout(() => {
+                  console.log("🔄 Retrying channel join...");
+                  initAgoraWithApiData(callInfo);
+                }, 3000);
+                break;
+            }
           }
-        });
-
+        );
         _engine.addListener?.(
           "RemoteVideoStateChanged",
-          (uid, state, reason, elapsed) => {
+          (uid: any, state: any, reason: any, elapsed: any) => {
             console.log("📹 Remote Video State Changed:");
             console.log("   UID:", uid);
             console.log("   State:", state);
             console.log("   Reason:", reason);
           }
         );
-
         _engine.addListener?.(
           "RemoteAudioStateChanged",
-          (uid, state, reason, elapsed) => {
+          (uid: any, state: any, reason: any, elapsed: any) => {
             console.log("🔊 Remote Audio State Changed:");
             console.log("   UID:", uid);
             console.log("   State:", state);
@@ -787,7 +1081,7 @@ export default function VideoCallScreen() {
 
         console.log("Event listeners added");
       } catch (e) {
-        console.warn("Event listener setup failed:", e.message);
+        console.warn("Event listener setup failed:", (e as any)?.message);
       }
 
       // Validate token format before joining
@@ -849,13 +1143,153 @@ export default function VideoCallScreen() {
 
         if (numericUid <= 0 || numericUid > 2147483647) {
           throw new Error(`UID out of valid range: ${numericUid}`);
+        } // Try joining with different parameter combinations
+        console.log("🔄 Attempting to join channel..."); // IMPORTANT: Before trying to join, let's add one more potential fix
+        // Sometimes the issue is that we need to wait a bit more after engine setup
+        console.log("⏳ Additional wait for engine stabilization...");
+        await new Promise((resolve) => setTimeout(resolve, 500));
+
+        // 🔧 CRITICAL FIX: For SDK 4.x+, we need to properly initialize the engine
+        console.log("🔧 CRITICAL: Forcing engine initialization...");
+        try {
+          if (typeof _engine.initialize === "function") {
+            const initResult = await _engine.initialize();
+            console.log(
+              "✅ Engine.initialize() called successfully:",
+              initResult
+            );
+          } else {
+            console.log(
+              "ℹ️ Engine.initialize() not available - using older SDK version"
+            );
+          }
+        } catch (initError) {
+          console.warn(
+            "⚠️ Engine.initialize() failed:",
+            (initError as any)?.message
+          );
+          // Continue anyway - some older versions don't need this
         }
 
-        // Try joining with different parameter combinations
-        console.log("🔄 Attempting to join channel...");
+        // 🔧 Re-checking Android permissions...
+        if (Platform.OS === "android") {
+          try {
+            const permissions = await PermissionsAndroid.requestMultiple([
+              PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
+              PermissionsAndroid.PERMISSIONS.CAMERA,
+            ]);
 
-        // Check SDK version and use appropriate API
+            const audioGranted =
+              permissions[PermissionsAndroid.PERMISSIONS.RECORD_AUDIO] ===
+              PermissionsAndroid.RESULTS.GRANTED;
+            const cameraGranted =
+              permissions[PermissionsAndroid.PERMISSIONS.CAMERA] ===
+              PermissionsAndroid.RESULTS.GRANTED;
+
+            console.log("📋 Permissions status:", {
+              audioGranted,
+              cameraGranted,
+            });
+
+            if (!audioGranted) {
+              console.warn("⚠️ Audio permission not granted - muting audio");
+              setIsMuted(true);
+            }
+
+            if (!cameraGranted) {
+              console.warn(
+                "⚠️ Camera permission not granted - disabling video"
+              );
+              setIsCameraOn(false);
+            }
+          } catch (permError) {
+            console.warn(
+              "⚠️ Permission check failed:",
+              (permError as any)?.message
+            );
+          }
+        }
+
+        // Also check if there might be a UID mismatch in token
+        console.log("🔍 POTENTIAL TOKEN-UID MISMATCH CHECK:");
+        console.log("   Our UID:", numericUid);
+        console.log("   Token UID (might be encoded):", callInfo.patientUid);
+        console.log(
+          "   UID from agoraConfig:",
+          (callInfo as any).agoraConfig?.patientUid
+        );
+
+        // Try to decode token to see if UID matches (basic check)
+        try {
+          // Agora tokens contain the UID in base64 encoding
+          // This is just a rough check to see if our UID appears in the token
+          const tokenContainsUid =
+            callInfo.patientToken.includes(numericUid.toString()) ||
+            callInfo.patientToken.includes(callInfo.patientUid.toString());
+          console.log("   Token might contain our UID:", tokenContainsUid);
+        } catch (e) {
+          console.log("   Token UID check failed:", (e as any)?.message);
+        } // Check SDK version and use appropriate API
         let joinResult;
+
+        // 🚨 CRITICAL EMERGENCY FIX:
+        // The logs show connection state 5 (FAILED) - this means the engine is broken
+        // Let's try to completely recreate the engine as a last resort
+        const currentState = _engine.getConnectionState
+          ? await _engine.getConnectionState()
+          : null;
+        if (currentState === 5) {
+          console.log(
+            "🚨 EMERGENCY: Engine in FAILED state - attempting complete recreation"
+          );
+
+          try {
+            // Destroy the failed engine
+            if (_engine.destroy) {
+              await _engine.destroy();
+            } else if (_engine.release) {
+              await _engine.release();
+            }
+
+            // Wait a moment
+            await new Promise((resolve) => setTimeout(resolve, 500));
+
+            // Create completely fresh engine
+            console.log("🔄 Creating emergency replacement engine...");
+            let emergencyEngine;
+            if (RtcEngine.create) {
+              emergencyEngine = await RtcEngine.create(callInfo.agoraAppId);
+            } else if (typeof RtcEngine === "function") {
+              emergencyEngine = await RtcEngine(callInfo.agoraAppId);
+            }
+
+            if (emergencyEngine) {
+              console.log("✅ Emergency engine created successfully");
+              _engine = emergencyEngine;
+              setEngine(emergencyEngine);
+
+              // Quick setup for emergency engine
+              try {
+                await _engine.enableAudio();
+                await _engine.enableVideo();
+                console.log("✅ Emergency engine configured");
+              } catch (setupError) {
+                console.warn(
+                  "⚠️ Emergency engine setup failed:",
+                  (setupError as any)?.message
+                );
+              }
+            } else {
+              throw new Error("Failed to create emergency engine");
+            }
+          } catch (emergencyError) {
+            console.error(
+              "❌ Emergency engine recreation failed:",
+              (emergencyError as any)?.message
+            );
+            throw new Error("Complete engine failure - cannot proceed");
+          }
+        }
 
         console.log("🔍 ENGINE METHODS AVAILABLE:");
         console.log("   joinChannel:", typeof _engine.joinChannel);
@@ -864,17 +1298,41 @@ export default function VideoCallScreen() {
           typeof _engine.joinChannelWithUserAccount
         );
         console.log("   Engine constructor:", _engine.constructor?.name);
-
         try {
           // Method 1: Standard joinChannel with token, channel, info, uid
           console.log(
             "🔄 Method 1: Standard joinChannel(token, channel, null, uid)"
           );
+
+          // 🔧 CRITICAL FIX: Ensure UID is exactly what the token expects
+          // The logs show our UID and token UID might be different
+          const effectiveUid =
+            callInfo.uid || callInfo.patientUid || numericUid;
+          const effectiveToken = callInfo.token || callInfo.patientToken;
+
+          console.log("🔍 USING EFFECTIVE PARAMETERS:");
+          console.log("   Original UID:", numericUid);
+          console.log("   Token UID field:", callInfo.patientUid);
+          console.log("   Fallback UID field:", callInfo.uid);
+          console.log("   Effective UID (final):", effectiveUid);
+          console.log(
+            "   Original Token:",
+            callInfo.patientToken?.substring(0, 20) + "..."
+          );
+          console.log(
+            "   Fallback Token:",
+            callInfo.token?.substring(0, 20) + "..."
+          );
+          console.log(
+            "   Effective Token (final):",
+            effectiveToken?.substring(0, 20) + "..."
+          );
+
           joinResult = await _engine.joinChannel(
-            callInfo.patientToken,
+            effectiveToken,
             callInfo.channelName,
             null, // info (deprecated in newer versions)
-            numericUid
+            parseInt(effectiveUid)
           );
           console.log("✅ Standard join result:", joinResult);
 
@@ -882,7 +1340,7 @@ export default function VideoCallScreen() {
           if (joinResult < 0) {
             throw new Error(`Method 1 failed with code: ${joinResult}`);
           }
-        } catch (method1Error) {
+        } catch (method1Error: any) {
           console.log("❌ Method 1 failed:", method1Error.message);
 
           try {
@@ -902,7 +1360,7 @@ export default function VideoCallScreen() {
               throw new Error(`Method 2 failed with code: ${joinResult}`);
             }
           } catch (method2Error) {
-            console.log("❌ Method 2 failed:", method2Error.message);
+            console.log("❌ Method 2 failed:", (method2Error as any)?.message);
 
             try {
               // Method 3: Try with options object (v4+ style)
@@ -921,7 +1379,10 @@ export default function VideoCallScreen() {
                 throw new Error(`Method 3 failed with code: ${joinResult}`);
               }
             } catch (method3Error) {
-              console.log("❌ Method 3 failed:", method3Error.message);
+              console.log(
+                "❌ Method 3 failed:",
+                (method3Error as any)?.message
+              );
 
               try {
                 // Method 4: Try with string UID instead of number
@@ -938,7 +1399,10 @@ export default function VideoCallScreen() {
                   throw new Error(`Method 4 failed with code: ${joinResult}`);
                 }
               } catch (method4Error) {
-                console.log("❌ Method 4 failed:", method4Error.message);
+                console.log(
+                  "❌ Method 4 failed:",
+                  (method4Error as any)?.message
+                );
 
                 try {
                   // Method 5: Try with auto-assigned UID (0)
@@ -955,7 +1419,10 @@ export default function VideoCallScreen() {
                     throw new Error(`Method 5 failed with code: ${joinResult}`);
                   }
                 } catch (method5Error) {
-                  console.log("❌ Method 5 failed:", method5Error.message);
+                  console.log(
+                    "❌ Method 5 failed:",
+                    (method5Error as any)?.message
+                  );
 
                   try {
                     // Method 6: Try joinChannelWithUserAccount if available
@@ -979,9 +1446,10 @@ export default function VideoCallScreen() {
                       );
                     }
                   } catch (method6Error) {
-                    console.log("❌ Method 6 failed:", method6Error.message);
-
-                    // All methods failed - this might be a token or server issue
+                    console.log(
+                      "❌ Method 6 failed:",
+                      (method6Error as any)?.message
+                    ); // All methods failed - this might be a token or server issue
                     console.error("🚨 ALL JOIN METHODS FAILED!");
                     console.error("🔍 TOKEN ANALYSIS:");
                     console.error("   Token:", callInfo.patientToken);
@@ -1003,9 +1471,68 @@ export default function VideoCallScreen() {
                       )
                     );
 
-                    throw new Error(
-                      `All join methods failed. This suggests token/server issue. Last: ${method6Error.message}`
+                    // Try one last approach - maybe the issue is UID/token mismatch
+                    // Let's try with the original UID from the raw response
+                    console.log(
+                      "🔄 Method 7: Last resort - try original response values"
                     );
+
+                    const originalUid =
+                      (callInfo as any).uid ||
+                      (callInfo as any).agoraConfig?.uid;
+                    const originalToken =
+                      (callInfo as any).token || callInfo.patientToken;
+
+                    if (
+                      originalUid &&
+                      originalToken &&
+                      originalUid !== numericUid
+                    ) {
+                      console.log(
+                        "   Found different UID in original response:",
+                        originalUid
+                      );
+                      console.log("   Trying with original UID/token pair...");
+
+                      try {
+                        joinResult = await _engine.joinChannel(
+                          originalToken,
+                          callInfo.channelName,
+                          null,
+                          parseInt(originalUid)
+                        );
+                        console.log("✅ Original UID join result:", joinResult);
+
+                        if (joinResult >= 0) {
+                          console.log(
+                            "🎉 SUCCESS with original UID! Token/UID pairing was the issue."
+                          );
+                          // Update our local UID reference
+                          setLocalUid(parseInt(originalUid));
+                        } else {
+                          throw new Error(
+                            `Method 7 failed with code: ${joinResult}`
+                          );
+                        }
+                      } catch (method7Error) {
+                        console.log(
+                          "❌ Method 7 also failed:",
+                          (method7Error as any)?.message
+                        );
+
+                        throw new Error(
+                          `All join methods failed including UID fallback. This suggests fundamental token/server issue. Last: ${
+                            (method7Error as any)?.message
+                          }`
+                        );
+                      }
+                    } else {
+                      throw new Error(
+                        `All join methods failed. This suggests token/server issue. Last: ${
+                          (method6Error as any)?.message
+                        }`
+                      );
+                    }
                   }
                 }
               }
@@ -1031,7 +1558,7 @@ export default function VideoCallScreen() {
           };
 
           const errorMsg =
-            errorMessages[joinResult.toString()] ||
+            (errorMessages as any)[joinResult.toString()] ||
             `Unknown error code: ${joinResult}`;
           console.error("❌ Join channel error:", errorMsg);
 
@@ -1081,114 +1608,277 @@ export default function VideoCallScreen() {
           } catch (reinitError) {
             console.log(
               "❌ Engine reinitialization failed:",
-              reinitError.message
+              (reinitError as any)?.message
             );
             throw new Error(
               `Complete failure - even reinit failed: ${errorMsg}`
             );
           }
-        }
-
-        // If we reach here, join was successful (result >= 0)
+        } // If we reach here, join was successful (result >= 0)
         console.log(
           "✅ Channel join initiated successfully with result:",
           joinResult
         );
 
-        // Wait for JoinChannelSuccess event with timeout
+        // 🔧 IMMEDIATE SUCCESS FEEDBACK: If join result is 0, start optimistic UI updates
+        if (joinResult === 0) {
+          console.log(
+            "🎉 Join result is 0 (SUCCESS) - starting optimistic updates"
+          );
+
+          // Start optimistic state updates while waiting for event
+          setTimeout(() => {
+            setCallStatus("Đang hoàn tất kết nối...");
+
+            // Give it a moment, then check if we should trigger success
+            setTimeout(async () => {
+              if (!isJoined) {
+                try {
+                  const state = _engine.getConnectionState
+                    ? await _engine.getConnectionState()
+                    : null;
+                  console.log("🔍 Post-join state check:", state);
+                  if (state === 3) {
+                    console.log(
+                      "✅ OPTIMISTIC SUCCESS: State is CONNECTED after successful join"
+                    );
+                    setIsLoading(false); // 🔧 CRITICAL: Stop loading state
+                    setLocalUid(numericUid);
+                    setIsJoined(true);
+                    setCallStatus("Đã kết nối");
+                    clearTimeout(joinTimeout);
+                  }
+                } catch (e) {
+                  console.log(
+                    "⚠️ Post-join state check failed:",
+                    (e as any)?.message
+                  );
+                }
+              }
+            }, 3000); // Check after 3 seconds
+          }, 500); // Initial status update after 500ms
+        } // Wait for JoinChannelSuccess event with timeout
         const joinTimeout = setTimeout(() => {
           if (!isJoined) {
             console.error(
               "❌ Join timeout - no JoinChannelSuccess event received"
             );
-            // Use setTimeout to avoid setState during render
-            setTimeout(() => {
-              setCallStatus("Timeout kết nối");
 
-              Alert.alert(
-                "Timeout kết nối",
-                "Không thể tham gia kênh sau khi thử tất cả phương pháp. Có thể do:\n• Token từ server không hợp lệ\n• Kênh chưa được tạo\n• Vấn đề mạng\n\nThử demo mode?",
-                [
-                  { text: "Demo Mode", onPress: () => startDemoMode() },
-                  {
-                    text: "Lấy token mới",
-                    onPress: async () => {
-                      try {
-                        console.log("🔄 Getting completely fresh token...");
-                        const freshResponse = await userService.joinCall(
-                          appointmentId as string
-                        );
-                        if (freshResponse.success) {
-                          // Wait before retry
-                          setTimeout(() => {
-                            initAgoraWithApiData(freshResponse.data);
-                          }, 1000);
-                        } else {
-                          throw new Error("Failed to get fresh token");
+            // 🔧 BACKUP SUCCESS DETECTION: Check if we're actually connected
+            console.log("🔍 BACKUP: Checking actual connection state...");
+
+            setTimeout(async () => {
+              try {
+                // Check if engine thinks we're connected
+                const currentState = _engine.getConnectionState
+                  ? await _engine.getConnectionState()
+                  : null;
+                console.log("🔍 Current connection state:", currentState); // Connection state 3 = CONNECTED
+                if (currentState === 3) {
+                  console.log(
+                    "✅ BACKUP SUCCESS: Engine reports CONNECTED state!"
+                  );
+                  console.log(
+                    "🎉 Manually triggering success - JoinChannelSuccess event was missed"
+                  );
+
+                  // Manually trigger the success logic
+                  setIsLoading(false); // 🔧 CRITICAL: Stop loading state
+                  setLocalUid(numericUid);
+                  setIsJoined(true);
+                  setCallStatus("Đã kết nối");
+                }
+
+                // If still not connected, show the timeout error
+                setCallStatus("Timeout kết nối");
+                Alert.alert(
+                  "Timeout kết nối",
+                  "Cuộc gọi đã được khởi tạo thành công nhưng sự kiện JoinChannelSuccess không được nhận sau 15 giây.\n\nĐiều này có thể do:\n• Mạng chậm\n• Sự kiện SDK bị trễ\n• Vấn đề với kênh\n\nThử lại hoặc kiểm tra kết nối mạng.",
+                  [
+                    { text: "Quay lại", onPress: () => router.back() },
+                    {
+                      text: "Lấy token mới",
+                      onPress: async () => {
+                        try {
+                          console.log("🔄 Getting completely fresh token...");
+                          const freshResponse = await userService.joinCall(
+                            appointmentId as string
+                          );
+                          if (freshResponse.success) {
+                            // Wait before retry
+                            setTimeout(() => {
+                              initAgoraWithApiData(freshResponse.data);
+                            }, 1000);
+                          } else {
+                            throw new Error("Failed to get fresh token");
+                          }
+                        } catch (refreshError) {
+                          console.error(
+                            "❌ Token refresh failed:",
+                            refreshError
+                          );
+                          Alert.alert(
+                            "Lỗi",
+                            "Không thể lấy token mới. Vui lòng thử lại sau.",
+                            [{ text: "Quay lại", onPress: () => router.back() }]
+                          );
                         }
-                      } catch (refreshError) {
-                        console.error("❌ Token refresh failed:", refreshError);
-                        startDemoMode();
-                      }
+                      },
                     },
-                  },
-                  {
-                    text: "Debug Server",
-                    onPress: () => {
-                      console.log("🔍 FULL DEBUG INFO FOR SERVER:");
-                      console.log("   App ID:", callInfo.agoraAppId);
-                      console.log("   Channel:", callInfo.channelName);
-                      console.log("   Token:", callInfo.patientToken);
-                      console.log("   UID:", callInfo.patientUid);
-                      console.log("   Call ID:", callInfo.callId);
+                    {
+                      text: "Force Join",
+                      onPress: () => {
+                        console.log(
+                          "🔧 FORCE JOIN: User manually triggering success"
+                        );
+                        setIsLoading(false); // 🔧 CRITICAL: Stop loading state
+                        setLocalUid(numericUid);
+                        setIsJoined(true);
+                        setCallStatus("Đã kết nối (thủ công)");
+                      },
+                    },
+                  ]
+                );
+              } catch (checkError) {
+                console.error(
+                  "❌ Backup check failed:",
+                  (checkError as any)?.message
+                );
 
-                      Alert.alert(
-                        "Debug Info",
-                        `App ID: ${callInfo.agoraAppId}\nChannel: ${callInfo.channelName}\nUID: ${callInfo.patientUid}\nToken Length: ${callInfo.patientToken?.length}`
-                      );
+                // Fallback to original timeout handling
+                setCallStatus("Timeout kết nối");
+                Alert.alert(
+                  "Timeout kết nối",
+                  "Không thể tham gia kênh Agora sau thời gian chờ. Có thể do:\n• Token từ server không hợp lệ\n• Kênh chưa được tạo\n• Vấn đề mạng",
+                  [
+                    { text: "Quay lại", onPress: () => router.back() },
+                    {
+                      text: "Debug Server",
+                      onPress: () => {
+                        console.log("🔍 FULL DEBUG INFO FOR SERVER:");
+                        console.log("   App ID:", callInfo.agoraAppId);
+                        console.log("   Channel:", callInfo.channelName);
+                        console.log("   Token:", callInfo.patientToken);
+                        console.log("   UID:", callInfo.patientUid);
+                        console.log("   Call ID:", callInfo.callId);
+
+                        Alert.alert(
+                          "Debug Info",
+                          `App ID: ${callInfo.agoraAppId}\nChannel: ${callInfo.channelName}\nUID: ${callInfo.patientUid}\nToken Length: ${callInfo.patientToken?.length}`
+                        );
+                      },
                     },
-                  },
-                ]
-              );
+                  ]
+                );
+              }
             }, 0);
           }
-        }, 10000); // Longer timeout since we tried so many methods
+        }, 15000); // Increased timeout to 15 seconds
 
         // Clear timeout when join succeeds
         const cleanupJoinListener = () => {
           clearTimeout(joinTimeout);
-        };
+        }; // Store cleanup function for later use
+        (_engine as any)._joinTimeoutCleanup = cleanupJoinListener;
 
-        // Store cleanup function for later use
-        _engine._joinTimeoutCleanup = cleanupJoinListener;
-      } catch (e) {
+        // 🔧 PROACTIVE SUCCESS MONITORING: Check connection state periodically
+        console.log("🔄 Starting proactive connection monitoring...");
+        const connectionMonitor = setInterval(async () => {
+          if (isJoined) {
+            clearInterval(connectionMonitor);
+            return;
+          }
+
+          try {
+            const currentState = _engine.getConnectionState
+              ? await _engine.getConnectionState()
+              : null;
+            console.log("🔍 Connection monitor - state:", currentState);
+
+            // State 3 = CONNECTED
+            if (currentState === 3) {
+              console.log(
+                "✅ PROACTIVE SUCCESS: Connection state changed to CONNECTED!"
+              );
+              clearInterval(connectionMonitor);
+              clearTimeout(joinTimeout); // Trigger success manually since event might be delayed
+              setTimeout(() => {
+                if (!isJoined) {
+                  console.log(
+                    "🎉 Manually triggering success from connection monitor"
+                  );
+                  setIsLoading(false); // 🔧 CRITICAL: Stop loading state
+                  setLocalUid(numericUid);
+                  setIsJoined(true);
+                  setCallStatus("Đã kết nối");
+                }
+              }, 0);
+            }
+          } catch (monitorError) {
+            console.log(
+              "⚠️ Connection monitor error:",
+              (monitorError as any)?.message
+            );
+          }
+        }, 2000); // Check every 2 seconds
+
+        // Clean up monitor after timeout
+        setTimeout(() => {
+          clearInterval(connectionMonitor);
+        }, 16000);
+      } catch (e: any) {
         console.error("❌ Join channel failed:", e.message);
         console.error("❌ Join channel error details:", e);
 
-        // More specific error handling
-        let errorMessage = e.message;
-        let shouldRetry = false;
+        // Log additional debug info
+        console.log("🔍 FULL DEBUG INFO:");
+        console.log("   Token:", callInfo.patientToken);
+        console.log("   Token length:", callInfo.patientToken?.length);
+        console.log("   Channel:", callInfo.channelName);
+        console.log("   UID:", numericUid);
+        console.log("   App ID:", callInfo.agoraAppId); // Check if this is a persistent Agora issue
+        const isPersistentAgoraIssue =
+          e.message?.includes("All join methods failed") ||
+          e.message?.includes("ERR_INVALID_ARGUMENT") ||
+          e.message?.includes("ERR_NOT_READY") ||
+          (e.message?.includes("Method") &&
+            e.message?.includes("failed with code:"));
 
-        if (e.message.includes("All join methods failed")) {
-          errorMessage =
-            "Tất cả phương pháp kết nối đều thất bại. Có thể do token không hợp lệ hoặc server chưa sẵn sàng.";
-          shouldRetry = true;
-        } else if (e.message.includes("ERR_INVALID_ARGUMENT")) {
-          errorMessage =
-            "Thông số không hợp lệ. Có thể token hết hạn hoặc channel không đúng.";
-          shouldRetry = true;
-        } else if (e.message.includes("ERR_NOT_READY")) {
-          errorMessage = "SDK chưa sẵn sàng. Thử lại sau.";
-          shouldRetry = true;
-        } else if (e.message.includes("ERR_REFUSED")) {
-          errorMessage = "Yêu cầu bị từ chối. Kiểm tra quyền truy cập.";
-        }
+        if (isPersistentAgoraIssue) {
+          console.error(
+            "❌ Persistent Agora SDK issues detected - showing error to user"
+          );
 
-        // Use setTimeout to avoid setState during render
+          // Use setTimeout to avoid setState during render
+          setTimeout(() => {
+            setIsLoading(false);
+            Alert.alert(
+              "Lỗi Agora SDK",
+              "Không thể kết nối với Agora SDK sau nhiều lần thử. Có thể do:\n• Cấu hình SDK không đúng\n• Token không hợp lệ\n• Sự cố mạng\n\nVui lòng thử lại sau hoặc liên hệ hỗ trợ.",
+              [
+                { text: "Quay lại", onPress: () => router.back() },
+                {
+                  text: "Thử lại",
+                  onPress: () => {
+                    // Retry initialization
+                    if (appointmentId) {
+                      initializeAppointmentCall(appointmentId as string);
+                    } else if (callId) {
+                      initializeChatCall(callId as string);
+                    }
+                  },
+                },
+              ]
+            );
+          }, 0);
+          return;
+        } // For other errors, show manual options
+        const errorMessage = e.message || "Unknown error occurred";
+        const shouldRetry = !isPersistentAgoraIssue; // Use setTimeout to avoid setState during render
         setTimeout(() => {
           Alert.alert("Lỗi tham gia kênh", errorMessage, [
-            { text: "Demo Mode", onPress: () => startDemoMode() },
-            ...(shouldRetry
+            { text: "Quay lại", onPress: () => router.back() },
+            ...(shouldRetry && appointmentId
               ? [
                   {
                     text: "Lấy token mới",
@@ -1208,7 +1898,11 @@ export default function VideoCallScreen() {
                         }
                       } catch (refreshError) {
                         console.error("❌ Fresh token failed:", refreshError);
-                        startDemoMode();
+                        Alert.alert(
+                          "Lỗi",
+                          "Không thể lấy token mới. Vui lòng thử lại sau.",
+                          [{ text: "Quay lại", onPress: () => router.back() }]
+                        );
                       }
                     },
                   },
@@ -1228,40 +1922,115 @@ export default function VideoCallScreen() {
           ]);
         }, 100);
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error initializing Agora with API data:", error);
       Alert.alert("Lỗi Agora", `Không thể khởi tạo Agora: ${error.message}`, [
-        {
-          text: "Demo mode",
-          onPress: () => startDemoMode(),
-        },
         {
           text: "Thử lại",
           onPress: () => initAgoraWithApiData(callData),
         },
         {
-          text: "Thoát",
+          text: "Quay lại",
           onPress: () => router.back(),
         },
       ]);
+    }
+  }; // Enhanced Agora initialization with retry logic
+  const initAgoraWithApiDataEnhanced = async (callInfo: any) => {
+    try {
+      console.log("🚀 Starting enhanced Agora initialization with retry...");
+
+      // Validate token first
+      const isTokenValid = await validateTokenBeforeJoin(callInfo);
+      if (!isTokenValid) {
+        throw new Error("Token validation failed");
+      }
+
+      // Try the original method first
+      await initAgoraWithApiData(callInfo);
+    } catch (error) {
+      console.error("❌ Standard init failed, trying token refresh:", error);
+
+      // If standard method fails, try refreshing token
+      try {
+        console.log("🔄 Attempting token refresh...");
+
+        const refreshResponse = await userService.joinCall(
+          callInfo.appointmentId || callInfo.callId
+        );
+
+        if (refreshResponse.success) {
+          console.log("✅ New token received, retrying...");
+
+          // Update callInfo with new token
+          const refreshedCallInfo = {
+            ...callInfo,
+            patientToken:
+              refreshResponse.data.patientToken ||
+              (refreshResponse.data as any).token,
+            patientUid:
+              refreshResponse.data.patientUid ||
+              (refreshResponse.data as any).uid,
+            channelName: refreshResponse.data.channelName,
+          };
+
+          // Validate new token
+          const isNewTokenValid = await validateTokenBeforeJoin(
+            refreshedCallInfo
+          );
+          if (!isNewTokenValid) {
+            throw new Error("Refreshed token is also invalid");
+          }
+
+          // Retry with new token
+          await initAgoraWithApiData(refreshedCallInfo);
+        } else {
+          throw new Error("Token refresh failed");
+        }
+      } catch (refreshError) {
+        console.error("❌ Token refresh also failed:", refreshError);
+        setIsLoading(false);
+
+        Alert.alert(
+          "Lỗi kết nối nghiêm trọng",
+          `Không thể tham gia cuộc gọi sau nhiều lần thử. Vấn đề có thể là:\n\n• Token đã hết hạn\n• Server đang bận\n• Kết nối mạng không ổn định\n\nVui lòng thử lại sau ít phút.`,
+          [
+            {
+              text: "Thử lại",
+              onPress: () => {
+                setIsLoading(true);
+                initAgoraWithApiDataEnhanced(callInfo);
+              },
+            },
+            {
+              text: "Quay lại",
+              onPress: () => router.back(),
+            },
+          ]
+        );
+      }
     }
   };
 
   const startDemoMode = () => {
     console.log("Starting demo mode");
-    setCallStatus("Demo mode - Đang mô phỏng cuộc gọi");
 
-    // Simulate joining
+    // Wrap all state updates in setTimeout to avoid setState during render
     setTimeout(() => {
-      setIsJoined(true);
-      setCallStatus("Demo: Đã tham gia cuộc gọi");
+      setCallStatus("Demo mode - Đang mô phỏng cuộc gọi");
 
-      // Simulate remote user after 3 seconds
+      // Simulate joining
       setTimeout(() => {
-        setRemoteUid(12345);
-        setCallStatus("Demo: Đã kết nối với bác sĩ");
-      }, 3000);
-    }, 2000);
+        setIsJoined(true);
+        setCallStatus("Demo: Đã tham gia cuộc gọi");
+
+        // Simulate remote user after 3 seconds
+        setTimeout(() => {
+          setRemoteUid(12345);
+          setCallStatus("Demo: Đã kết nối với bác sĩ");
+        }, 3000);
+      }, 2000);
+    }, 0);
   };
 
   const requestPermissions = async () => {
@@ -1381,11 +2150,9 @@ export default function VideoCallScreen() {
                   await engine.release();
                   console.log("Released Agora engine");
                 }
-              }
-
-              // End call on backend if we have callData
+              } // End call on backend if we have callData
               if (callData?.callId) {
-                await chatService.endCall(callData.callId);
+                await callService.endCall(callData.callId);
                 console.log("Call ended on backend");
               }
 
@@ -1394,10 +2161,12 @@ export default function VideoCallScreen() {
               }
 
               endCallIndicator();
+              clearCallState(); // Clear incoming call state
               router.back();
             } catch (error) {
               console.error("Error ending call:", error);
               endCallIndicator();
+              clearCallState(); // Clear incoming call state on error too
               router.back();
             }
           },
@@ -1424,6 +2193,51 @@ export default function VideoCallScreen() {
     });
   };
 
+  // Check if Agora token is expired
+  const isTokenExpired = (token: string): boolean => {
+    try {
+      // Agora token format: appId + signature + encoded data
+      // For now, we'll use a simple heuristic - tokens older than 24h might be expired
+      const tokenTimestamp = Date.now(); // We don't have exact creation time
+      // This is a placeholder - in real apps, you'd decode the token or check with server
+      return false; // For now, assume token is valid
+    } catch (error) {
+      console.warn("Token validation failed:", error);
+      return true; // If we can't validate, assume expired
+    }
+  };
+
+  // Enhanced token validation
+  const validateTokenBeforeJoin = async (callInfo: any): Promise<boolean> => {
+    try {
+      console.log("🔍 Validating token before join...");
+
+      if (!callInfo.patientToken) {
+        console.error("❌ No token provided");
+        return false;
+      }
+
+      if (callInfo.patientToken.length < 100) {
+        console.error("❌ Token too short, likely invalid");
+        return false;
+      }
+
+      // Check token format
+      if (
+        !callInfo.patientToken.startsWith(callInfo.agoraAppId.substring(0, 8))
+      ) {
+        console.warn("⚠️ Token format might be incorrect");
+        // Still proceed, but log warning
+      }
+
+      console.log("✅ Token passed basic validation");
+      return true;
+    } catch (error) {
+      console.error("❌ Token validation error:", error);
+      return false;
+    }
+  };
+
   // Add test connection function
   const testAgoraConnection = async () => {
     if (!engine || !AGORA_AVAILABLE) {
@@ -1448,6 +2262,35 @@ export default function VideoCallScreen() {
     }
   };
 
+  // Add camera debug function
+  const testCameraPreview = async () => {
+    if (!engine || !AGORA_AVAILABLE) {
+      Alert.alert("Debug", "Engine not available");
+      return;
+    }
+
+    try {
+      console.log("🎥 Testing camera preview...");
+
+      // Stop current preview
+      if (engine.stopPreview) {
+        await engine.stopPreview();
+      }
+
+      // Restart preview
+      await engine.enableLocalVideo(true);
+      if (engine.startPreview) {
+        await engine.startPreview();
+      }
+
+      Alert.alert("Debug", "Camera preview restarted");
+    } catch (error) {
+      Alert.alert(
+        "Debug Error",
+        `Camera test failed: ${(error as any)?.message}`
+      );
+    }
+  };
   // Add button to test connection in development
   const showConnectionDebug = () => {
     const debugInfo = `
@@ -1459,6 +2302,7 @@ Primary Remote: ${remoteUid}
 Joined: ${isJoined}
 Engine: ${!!engine}
 AGORA_AVAILABLE: ${AGORA_AVAILABLE}
+Camera On: ${isCameraOn}
 
 Connection State: ${engine?.getConnectionState?.() || "N/A"}
 Engine Remote Users: ${engine?.getRemoteUsers?.()?.length || 0}
@@ -1484,6 +2328,7 @@ Engine Remote Users: ${engine?.getRemoteUsers?.()?.length || 0}
         },
       },
       { text: "Test Connection", onPress: testAgoraConnection },
+      { text: "Test Camera", onPress: testCameraPreview },
       { text: "OK" },
     ]);
   };
@@ -1510,434 +2355,322 @@ Engine Remote Users: ${engine?.getRemoteUsers?.()?.length || 0}
     );
   }
 
+  // Return component JSX
   return (
-    <>
-      <Stack.Screen options={{ headerShown: false }} />
-      <SafeAreaView style={styles.container}>
-        {/* Call Header */}
-        <View style={styles.callHeader}>
-          <TouchableOpacity
-            style={styles.minimizeButton}
-            onPress={handleMinimize}
-          >
-            <Ionicons name="chevron-down" size={24} color="#FFFFFF" />
-          </TouchableOpacity>
+    <SafeAreaView style={styles.container}>
+      <Stack.Screen
+        options={{
+          title: isJoined ? "Đang gọi..." : "Đang kết nối...",
+          headerShown: false,
+        }}
+      />
 
-          <View style={styles.callInfo}>
-            <Text style={styles.participantName}>
-              {doctorName || callerName || "Bác sĩ"}
-            </Text>
-            <Text style={styles.callStatus}>{callStatus}</Text>
-            <Text style={styles.callDuration}>
-              {formatDuration(callDuration)}
-            </Text>
-            {/* Add user count indicator */}
-            {remoteUsers.length > 0 && (
-              <Text style={styles.userCount}>
-                {remoteUsers.length} người tham gia
-              </Text>
-            )}
-          </View>
-
-          <TouchableOpacity
-            style={styles.infoButton}
-            onPress={showConnectionDebug}
-          >
-            <Ionicons
-              name="information-circle-outline"
-              size={24}
-              color="#FFFFFF"
-            />
-          </TouchableOpacity>
+      {isLoading ? (
+        <View style={styles.loadingContainer}>
+          <Text style={styles.loadingText}>Đang khởi tạo cuộc gọi...</Text>
         </View>
-
-        {/* Video Area */}
-        <View style={styles.videoContainer}>
-          {/* Remote Video - Now properly handles multiple users */}
-          {remoteUsers.length > 0 && engine && AGORA_AVAILABLE ? (
-            <RtcRemoteView.SurfaceView
-              style={styles.remoteVideo}
-              uid={remoteUsers[0]} // Use first remote user
-              channelId={callData?.channelName || "demo-channel"}
-              renderMode={VideoRenderMode?.Hidden || 1}
-            />
-          ) : remoteUsers.length > 0 ? (
-            // Demo remote video
-            <View style={styles.remoteVideo}>
-              <View style={styles.demoVideoContainer}>
-                <Ionicons name="videocam" size={100} color="#00A86B" />
-                <Text style={styles.demoVideoText}>
-                  {doctorName || "Bác sĩ"} (Demo)
-                </Text>
-                <View style={styles.liveIndicator}>
-                  <View style={styles.liveDot} />
-                  <Text style={styles.liveText}>DEMO</Text>
-                </View>
-              </View>
-            </View>
-          ) : (
-            <View style={styles.remoteVideo}>
-              <View style={styles.waitingContainer}>
-                <View style={styles.avatarPlaceholder}>
-                  <Ionicons name="person" size={80} color="#666" />
-                </View>
-                <Text style={styles.waitingText}>
-                  {!AGORA_AVAILABLE
-                    ? "Demo mode - Agora SDK không khả dụng"
-                    : isJoined
-                    ? "Đang chờ bác sĩ tham gia..."
-                    : callStatus}
-                </Text>
-                {isJoined && AGORA_AVAILABLE && callData && (
-                  <View style={styles.connectionInfo}>
-                    <Text style={styles.connectionText}>
-                      Channel: {callData.channelName}
-                    </Text>
-                    <Text style={styles.connectionText}>
-                      My UID: {localUid}
-                    </Text>
-                    <Text style={styles.connectionText}>
-                      Remote Users: {remoteUsers.length}
-                    </Text>
-                  </View>
-                )}
-              </View>
-            </View>
-          )}
-
-          {/* Local Video - Show when joined */}
-          {engine && isJoined && AGORA_AVAILABLE ? (
-            <View style={styles.localVideoContainer}>
-              {isCameraOn ? (
-                <RtcLocalView.SurfaceView
-                  style={styles.localVideo}
-                  channelId={callData?.channelName || "demo-channel"}
+      ) : (
+        <>
+          {/* Video call interface */}
+          <View style={styles.videoContainer}>
+            {/* Remote video view */}
+            <View style={styles.remoteVideoContainer}>
+              {remoteUsers.length > 0 && AGORA_AVAILABLE && RtcRemoteView ? (
+                <RtcRemoteView.SurfaceView
+                  style={styles.remoteVideo}
+                  uid={remoteUsers[0]}
+                  channelId={callData?.channelName || ""}
                   renderMode={VideoRenderMode?.Hidden || 1}
+                  zOrderMediaOverlay={false}
                 />
               ) : (
-                <View style={styles.localVideoOff}>
-                  <Ionicons name="videocam-off" size={32} color="#FFFFFF" />
+                <View style={styles.placeholderVideo}>
+                  <Ionicons name="person" size={80} color="#666" />
+                  <Text style={styles.placeholderText}>{callStatus}</Text>
                 </View>
               )}
-              <Text style={styles.localVideoLabel}>Bạn</Text>
-            </View>
-          ) : isJoined ? (
-            // Demo local video
+            </View>{" "}
+            {/* Local video view - Always show when camera is on */}
             <View style={styles.localVideoContainer}>
-              {isCameraOn ? (
-                <View style={styles.localVideo}>
-                  <View style={styles.demoLocalVideo}>
-                    <Ionicons name="person" size={40} color="#4285F4" />
-                    <Text style={styles.demoText}>Demo</Text>
-                  </View>
-                </View>
+              {engine && isCameraOn && AGORA_AVAILABLE && RtcLocalView ? (
+                <RtcLocalView.SurfaceView
+                  style={styles.localVideo}
+                  channelId={callData?.channelName || ""}
+                  renderMode={VideoRenderMode?.Hidden || 1}
+                  zOrderOnTop={true}
+                  zOrderMediaOverlay={true}
+                />
               ) : (
-                <View style={styles.localVideoOff}>
-                  <Ionicons name="videocam-off" size={32} color="#FFFFFF" />
+                <View style={styles.localVideoPlaceholder}>
+                  <Ionicons
+                    name={isCameraOn ? "videocam" : "videocam-off"}
+                    size={24}
+                    color={isCameraOn ? "#00A86B" : "#666"}
+                  />
+                  <Text style={styles.localVideoPlaceholderText}>
+                    {isCameraOn ? "Camera đang khởi động..." : "Camera tắt"}
+                  </Text>
                 </View>
               )}
-              <Text style={styles.localVideoLabel}>Bạn</Text>
             </View>
-          ) : null}
-        </View>
-
-        {/* Call Controls */}
-        <View style={styles.controlsContainer}>
-          <View style={styles.mainControls}>
+          </View>
+          {/* Call controls */}
+          <View style={styles.controlsContainer}>
             <TouchableOpacity
-              style={[styles.controlButton, isMuted && styles.mutedButton]}
-              onPress={toggleMute}
+              style={[
+                styles.controlButton,
+                isMuted && styles.controlButtonActive,
+              ]}
+              onPress={() => {
+                setIsMuted(!isMuted);
+                engine?.muteLocalAudioStream(!isMuted);
+              }}
             >
               <Ionicons
                 name={isMuted ? "mic-off" : "mic"}
-                size={28}
-                color="#FFFFFF"
+                size={24}
+                color="#fff"
               />
-            </TouchableOpacity>
-
+            </TouchableOpacity>{" "}
             <TouchableOpacity
-              style={styles.endCallButton}
-              onPress={handleEndCall}
-            >
-              <Ionicons name="call" size={32} color="#FFFFFF" />
-            </TouchableOpacity>
+              style={[
+                styles.controlButton,
+                !isCameraOn && styles.controlButtonActive,
+              ]}
+              onPress={async () => {
+                const newCameraState = !isCameraOn;
+                setIsCameraOn(newCameraState);
 
-            <TouchableOpacity
-              style={[styles.controlButton, !isCameraOn && styles.mutedButton]}
-              onPress={toggleCamera}
+                if (engine && AGORA_AVAILABLE) {
+                  try {
+                    if (newCameraState) {
+                      // Turn camera on
+                      await engine.enableLocalVideo(true);
+                      if (engine.startPreview) {
+                        await engine.startPreview();
+                      }
+                      console.log("✅ Camera turned ON");
+                    } else {
+                      // Turn camera off
+                      await engine.enableLocalVideo(false);
+                      if (engine.stopPreview) {
+                        await engine.stopPreview();
+                      }
+                      console.log("✅ Camera turned OFF");
+                    }
+                  } catch (error) {
+                    console.warn(
+                      "Camera toggle failed:",
+                      (error as any)?.message
+                    );
+                  }
+                } else {
+                  console.log("Camera toggled in demo mode:", newCameraState);
+                }
+              }}
             >
               <Ionicons
                 name={isCameraOn ? "videocam" : "videocam-off"}
-                size={28}
-                color="#FFFFFF"
-              />
+                size={24}
+                color="#fff"
+              />{" "}
+            </TouchableOpacity>
+            {/* PiP Button */}
+            <TouchableOpacity
+              style={[
+                styles.controlButton,
+                isPiPMode && styles.controlButtonActive,
+              ]}
+              onPress={async () => {
+                if (!isPiPMode) {
+                  await callServiceHook.enablePiP();
+                  setIsPiPMode(true);
+                  setIsMinimized(true);
+
+                  // Show PiP overlay
+                  Alert.alert(
+                    "Picture-in-Picture",
+                    "Cuộc gọi sẽ tiếp tục ở chế độ PiP. Bạn có thể sử dụng các app khác.",
+                    [{ text: "OK", onPress: () => router.back() }]
+                  );
+                } else {
+                  await callServiceHook.disablePiP();
+                  setIsPiPMode(false);
+                  setIsMinimized(false);
+                }
+              }}
+            >
+              <Ionicons name="contract" size={24} color="#fff" />
+            </TouchableOpacity>
+            {/* Minimize Button */}
+            <TouchableOpacity
+              style={styles.controlButton}
+              onPress={() => {
+                console.log("Minimizing call - session preserved");
+                setIsMinimized(true);
+
+                // Save call state for background
+                if (callData) {
+                  callServiceHook.saveCallState({
+                    ...callData,
+                    startTime: Date.now() - callDuration * 1000,
+                  });
+                }
+
+                // Just navigate back without ending the session
+                router.back();
+              }}
+            >
+              <Ionicons name="remove" size={24} color="#fff" />
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.controlButton, styles.endCallButton]}
+              onPress={handleEndCall}
+            >
+              <Ionicons name="call" size={24} color="#fff" />
+            </TouchableOpacity>
+          </View>{" "}
+          {/* Call duration and debug */}
+          <View style={styles.durationContainer}>
+            <TouchableOpacity onPress={showConnectionDebug}>
+              <Text style={styles.durationText}>
+                {Math.floor(callDuration / 60)
+                  .toString()
+                  .padStart(2, "0")}
+                :{(callDuration % 60).toString().padStart(2, "0")}
+              </Text>
+              <Text
+                style={[styles.durationText, { fontSize: 10, opacity: 0.7 }]}
+              >
+                DEBUG
+              </Text>
             </TouchableOpacity>
           </View>
-
-          <View style={styles.secondaryControls}>
-            <TouchableOpacity
-              style={styles.secondaryButton}
-              onPress={switchCamera}
-            >
-              <Ionicons name="camera-reverse" size={24} color="#FFFFFF" />
-              <Text style={styles.secondaryButtonText}>Chuyển</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.secondaryButton}
-              onPress={openChatDuringCall}
-            >
-              <Ionicons name="chatbubble" size={24} color="#FFFFFF" />
-              <Text style={styles.secondaryButtonText}>Tin nhắn</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity style={styles.secondaryButton}>
-              <Ionicons name="people" size={24} color="#FFFFFF" />
-              <Text style={styles.secondaryButtonText}>Thêm</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity style={styles.secondaryButton}>
-              <Ionicons name="ellipsis-horizontal" size={24} color="#FFFFFF" />
-              <Text style={styles.secondaryButtonText}>Khác</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </SafeAreaView>
-    </>
+        </>
+      )}
+    </SafeAreaView>
   );
 }
 
+// Add missing styles
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#1a1a1a",
+    backgroundColor: "#000",
   },
-  callHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 20,
-    paddingTop: 20,
-    paddingBottom: 10,
-    backgroundColor: "rgba(0, 0, 0, 0.3)",
-  },
-  minimizeButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: "rgba(255, 255, 255, 0.1)",
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  callInfo: {
-    alignItems: "center",
+  loadingContainer: {
     flex: 1,
-  },
-  participantName: {
-    fontSize: 18,
-    fontWeight: "bold",
-    color: "#FFFFFF",
-    marginBottom: 4,
-  },
-  callStatus: {
-    fontSize: 14,
-    color: "#CCCCCC",
-    marginBottom: 2,
-  },
-  callDuration: {
-    fontSize: 14,
-    color: "#00A86B",
-    fontWeight: "600",
-  },
-  infoButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: "rgba(255, 255, 255, 0.1)",
     justifyContent: "center",
     alignItems: "center",
+  },
+  loadingContent: {
+    alignItems: "center",
+    padding: 20,
+  },
+  loadingText: {
+    color: "#fff",
+    fontSize: 18,
+    marginTop: 20,
+    textAlign: "center",
+  },
+  loadingSubText: {
+    color: "#ccc",
+    fontSize: 14,
+    marginTop: 10,
+    textAlign: "center",
   },
   videoContainer: {
     flex: 1,
     position: "relative",
   },
+  remoteVideoContainer: {
+    flex: 1,
+  },
   remoteVideo: {
     flex: 1,
-    backgroundColor: "#2a2a2a",
   },
-  waitingContainer: {
+  placeholderVideo: {
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
+    backgroundColor: "#333",
   },
-  avatarPlaceholder: {
-    width: 120,
-    height: 120,
-    borderRadius: 60,
-    backgroundColor: "#404040",
-    justifyContent: "center",
-    alignItems: "center",
-    marginBottom: 20,
-  },
-  waitingText: {
-    fontSize: 18,
-    color: "#CCCCCC",
-    textAlign: "center",
-    marginBottom: 20,
-  },
-  connectionInfo: {
-    marginTop: 20,
-    alignItems: "center",
-  },
-  connectionText: {
-    color: "#CCCCCC",
-    fontSize: 10,
-    fontFamily: "monospace",
+  placeholderText: {
+    color: "#fff",
+    marginTop: 10,
+    fontSize: 16,
   },
   localVideoContainer: {
     position: "absolute",
-    top: 20,
+    top: 80,
     right: 20,
-    width: 120,
-    height: 160,
-    borderRadius: 15,
+    width: 130,
+    height: 170,
+    borderRadius: 12,
     overflow: "hidden",
-    borderWidth: 3,
+    backgroundColor: "#000",
+    borderWidth: 2,
     borderColor: "#00A86B",
+    shadowColor: "#000",
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.8,
+    shadowRadius: 4,
+    elevation: 5,
   },
   localVideo: {
     flex: 1,
   },
-  localVideoOff: {
+  localVideoPlaceholder: {
     flex: 1,
-    backgroundColor: "#333333",
+    backgroundColor: "#333",
     justifyContent: "center",
     alignItems: "center",
+    borderRadius: 8,
+    borderWidth: 2,
+    borderColor: "#555",
   },
-  localVideoLabel: {
-    position: "absolute",
-    bottom: 6,
-    left: 8,
-    fontSize: 12,
-    color: "#FFFFFF",
-    fontWeight: "600",
-    textShadowColor: "#000000",
-    textShadowOffset: { width: 1, height: 1 },
-    textShadowRadius: 2,
+  localVideoPlaceholderText: {
+    color: "#fff",
+    fontSize: 10,
+    marginTop: 4,
+    textAlign: "center",
   },
   controlsContainer: {
-    paddingHorizontal: 20,
-    paddingBottom: 40,
-    backgroundColor: "rgba(0, 0, 0, 0.3)",
-  },
-  mainControls: {
     flexDirection: "row",
     justifyContent: "center",
     alignItems: "center",
-    gap: 40,
-    marginBottom: 20,
+    paddingVertical: 30,
+    paddingHorizontal: 20,
   },
   controlButton: {
     width: 60,
     height: 60,
     borderRadius: 30,
-    backgroundColor: "rgba(255, 255, 255, 0.2)",
+    backgroundColor: "rgba(255,255,255,0.2)",
     justifyContent: "center",
     alignItems: "center",
+    marginHorizontal: 15,
   },
-  mutedButton: {
-    backgroundColor: "#dc3545",
+  controlButtonActive: {
+    backgroundColor: "#ff4444",
   },
   endCallButton: {
-    width: 70,
-    height: 70,
-    borderRadius: 35,
-    backgroundColor: "#dc3545",
-    justifyContent: "center",
-    alignItems: "center",
-    elevation: 5,
-    shadowColor: "#dc3545",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
+    backgroundColor: "#ff4444",
   },
-  secondaryControls: {
-    flexDirection: "row",
-    justifyContent: "space-around",
-    alignItems: "center",
+  durationContainer: {
+    position: "absolute",
+    top: 60,
+    left: 20,
+    backgroundColor: "rgba(0,0,0,0.5)",
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 5,
   },
-  secondaryButton: {
-    alignItems: "center",
-    padding: 10,
-  },
-  secondaryButtonText: {
-    color: "#CCCCCC",
-    fontSize: 12,
-    marginTop: 4,
-  },
-  demoVideoContainer: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    backgroundColor: "#2a2a2a",
-  },
-  demoVideoText: {
-    fontSize: 24,
-    fontWeight: "bold",
-    color: "#FFFFFF",
-    marginTop: 20,
-  },
-  liveIndicator: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginTop: 4,
-    color: "#CCCCCC",
+  durationText: {
+    color: "#fff",
     fontSize: 14,
-  },
-  loadingContainer: {
-    flex: 1,
-    backgroundColor: "#1a1a1a",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  loadingContent: {
-    alignItems: "center",
-  },
-  loadingText: {
-    fontSize: 18,
-    color: "#FFFFFF",
-    marginTop: 20,
-    textAlign: "center",
-  },
-  loadingSubText: {
-    fontSize: 14,
-    color: "#CCCCCC",
-    marginTop: 10,
-    textAlign: "center",
-  },
-  demoText: {
-    fontWeight: "bold",
-    fontSize: 12,
-    color: "#FFFFFF",
-  },
-  liveText: {
-    marginRight: 6,
-    backgroundColor: "#FFFFFF",
-    borderRadius: 4,
-    height: 8,
-    width: 8,
-  },
-  liveDot: {
-    borderRadius: 15,
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    backgroundColor: "rgba(0, 168, 107, 0.9)",
-    marginTop: 15,
-    padding: 40,
-  },
-  userCount: {
-    fontSize: 12,
-    color: "#00A86B",
-    marginTop: 2,
   },
 });

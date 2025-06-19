@@ -119,10 +119,84 @@ interface ChatEventHandlers {
   onError?: (error: any) => void;
   onConnected?: () => void;
   onDisconnected?: () => void;
+  // Add video call event handlers
+  onIncomingCall?: (data: {
+    callId: string;
+    callerId: string;
+    callType: "voice" | "video";
+    channelName: string;
+    agoraToken: string;
+    chatRoomId: string;
+  }) => void;
+  onCallResponseReceived?: (data: {
+    callId: string;
+    response: "accept" | "decline";
+    from: string;
+  }) => void;
+  onUserJoinedChannel?: (data: { userId: string; callId: string }) => void;
+  onUserLeftChannel?: (data: { userId: string; reason?: string }) => void;
+  onCallEnded?: (data: {
+    callId: string;
+    endedBy: string;
+    duration?: number;
+  }) => void;
+  onCallStatusUpdate?: (data: {
+    callId: string;
+    status: string;
+    duration?: number;
+  }) => void;
+  onCallServiceReady?: (data: { userId: string }) => void;
+}
+
+// Call-related interfaces
+interface CallParticipant {
+  id: string;
+  name: string;
+  avatar?: string;
+  role: "patient" | "doctor";
+}
+
+interface CallInitiateRequest {
+  patientId: string;
+  doctorId: string;
+  callType: "voice" | "video";
+}
+
+interface CallDetails {
+  _id: string;
+  callId: string;
+  roomId: string;
+  token: string;
+  uid: number;
+  userRole: "patient" | "doctor";
+  agoraAppId?: string;
+  channelName?: string;
+  patientUid?: number;
+  patientToken?: string;
+  doctorId?: string;
+  appointmentId?: string;
+  agoraConfig?: {
+    appId: string;
+    channelName: string;
+    patientUid: number;
+    patientToken: string;
+  };
+}
+
+interface IncomingCallData {
+  callId: string;
+  doctorId: string;
+  patientInfo: {
+    name: string;
+    avatar?: string;
+  };
+  callType: "voice" | "video";
+  message: string;
 }
 
 class ChatService {
   private socket: Socket | null = null;
+  private callSocket: Socket | null = null;
   private baseURL: string;
   private token: string | null = null;
   private eventHandlers: ChatEventHandlers = {};
@@ -699,232 +773,100 @@ class ChatService {
 
   disconnect(): void {
     if (this.socket) {
-      console.log("🔌 Disconnecting WebSocket...");
+      console.log("🔌 Disconnecting chat WebSocket...");
       this.socket.disconnect();
       this.socket = null;
-      console.log("✅ WebSocket disconnected");
+      console.log("✅ Chat WebSocket disconnected");
     }
 
-    // Clean up processed messages cache
     this.clearProcessedMessages();
   }
 
-  // Event handler registration
-  setEventHandlers(handlers: ChatEventHandlers): void {
-    this.eventHandlers = { ...this.eventHandlers, ...handlers };
+  async getMissedCalls(userId: string): Promise<{
+    missedCalls: Array<{
+      callId: string;
+      doctorInfo: { name: string };
+      missedAt: string;
+    }>;
+  }> {
+    console.log("📞 Getting missed calls for user:", userId);
+
+    const result = await this.apiRequest<{
+      missedCalls: Array<{
+        callId: string;
+        doctorInfo: { name: string };
+        missedAt: string;
+      }>;
+    }>(`/call/notifications/missed/${userId}`);
+
+    console.log("✅ Missed calls retrieved:", result);
+    return result;
   }
 
-  // WebSocket message sending - Match BE's expected events
-  sendTypingStatus(roomId: string, isTyping: boolean): void {
-    if (this.socket?.connected) {
-      authService
-        .getUserData()
-        .then((userInfo) => {
-          if (isTyping) {
-            console.log("✍️ Sending typing_start to backend");
-            this.socket?.emit("typing_start", {
-              roomId,
-              userId: userInfo?.id || "unknown",
-              userName: userInfo?.fullName || "User",
-            });
-          } else {
-            console.log("✍️ Sending typing_stop to backend");
-            this.socket?.emit("typing_stop", {
-              roomId,
-              userId: userInfo?.id || "unknown",
-            });
-          }
-        })
-        .catch((error) => {
-          console.warn("⚠️ Could not get user info for typing");
-        });
+  // WebSocket call events (updated to match documentation)
+  setUserOnline(userId: string): void {
+    if (this.callSocket?.connected) {
+      console.log("📞 Setting user online:", userId);
+      this.callSocket.emit("user_online", { userId });
     }
   }
 
-  // Immediate room join (used in connected event)
-  private joinRoomImmediately(roomId: string): void {
-    if (this.socket?.connected) {
-      console.log("🏠 IMMEDIATE room join:", roomId);
-
-      authService
-        .getUserData()
-        .then((userInfo) => {
-          const joinData = {
-            roomId,
-            userId: userInfo?.id || "unknown",
-          };
-
-          console.log("🏠 Emitting join_room with data:", joinData);
-          this.socket?.emit("join_room", joinData);
-
-          this.pendingRoomId = null; // Clear pending room ID
-        })
-        .catch((error) => {
-          console.warn(
-            "⚠️ Could not get user info for immediate room join:",
-            error
-          );
-        });
+  sendIncomingCallNotification(data: {
+    callId: string;
+    doctorId: string;
+    patientInfo: {
+      name: string;
+      avatar?: string;
+    };
+    roomId: string;
+    callType: "video" | "voice";
+    appointmentId?: string;
+  }): void {
+    if (this.callSocket?.connected) {
+      console.log("📞 Sending incoming call notification:", data);
+      this.callSocket.emit("incoming_call", data);
     }
   }
 
-  // Auto-join room when connection is established
-  autoJoinRoom(roomId: string): void {
-    if (!roomId) {
-      console.warn("⚠️ Cannot auto-join: no room ID provided");
-      return;
-    }
-
-    console.log("🏠 Setting up auto-join for room:", roomId);
-    this.pendingRoomId = roomId;
-
-    if (this.socket?.connected && this.connectionState) {
-      console.log("🏠 WebSocket ready, joining room immediately");
-      this.joinRoomImmediately(roomId);
-    } else {
-      console.log("🏠 WebSocket not ready, will auto-join when connected");
-    }
-  }
-
-  joinRoom(roomId: string): void {
-    if (this.socket?.connected) {
-      console.log("🏠 Manual room join:", roomId);
-      this.joinRoomImmediately(roomId);
-    } else {
-      console.warn(
-        "⚠️ Cannot join room: WebSocket not connected, storing for auto-join"
-      );
-      this.pendingRoomId = roomId;
-    }
-  }
-
-  leaveRoom(roomId: string): void {
-    if (this.socket?.connected) {
-      console.log("🚪 Leaving room via BE event:", roomId);
-
-      authService
-        .getUserData()
-        .then((userInfo) => {
-          console.log("🚪 Emitting leave_room to backend");
-          this.socket?.emit("leave_room", {
-            roomId,
-            userId: userInfo?.id || "unknown",
-          });
-        })
-        .catch((error) => {
-          console.warn("⚠️ Could not get user info for leaving room");
-        });
-    } else {
-      console.warn("⚠️ Cannot leave room: WebSocket not connected");
-    }
-  }
-
-  // Add ping method as BE suggests
-  ping(): void {
-    if (this.socket?.connected) {
-      console.log("🏓 Sending ping to server");
-      this.socket?.emit("ping");
-    }
-  }
-
-  // Update token when user logs in/out
-  updateToken(token: string | null): void {
-    console.log(
-      "🔑 Updating auth token:",
-      token ? `${token.substring(0, 50)}...` : "null"
-    );
-
-    // Validate token format before setting
-    if (token) {
-      const parts = token.split(".");
-      console.log("🔍 New token validation:");
-      console.log("   Parts count:", parts.length);
-      console.log("   Starts with 'eyJ':", token.startsWith("eyJ"));
-      console.log("   Length:", token.length);
-
-      if (parts.length !== 3) {
-        console.error("❌ Invalid JWT format provided to updateToken");
-        return;
-      }
-    }
-
-    this.token = token;
-
-    if (this.socket?.connected) {
-      console.log("🔄 Reconnecting WebSocket with new token...");
-      // Reconnect with new token
-      this.disconnect();
-      if (token) {
-        this.connect().catch(console.error);
-      }
-    }
-  }
-
-  // Health check - Keep method name, use renamed property
-  isConnected(): boolean {
-    const connected = this.socket?.connected && this.connectionState;
-    console.log("🔍 WebSocket connection status:", connected);
-    return connected;
-  }
-
-  getConnectionState(): string {
-    if (!this.socket) {
-      console.log("🔍 WebSocket state: disconnected (no socket)");
-      return "disconnected";
-    }
-
-    const isSocketConnected = this.socket.connected;
-    const isAuthenticated = this.connectionState;
-
-    console.log("🔍 WebSocket connection details:", {
-      socketConnected: isSocketConnected,
-      authenticated: isAuthenticated,
-      finalState:
-        isSocketConnected && isAuthenticated ? "connected" : "connecting",
-    });
-
-    const state =
-      isSocketConnected && isAuthenticated ? "connected" : "connecting";
-    console.log("🔍 WebSocket state:", state);
-    return state;
-  }
-
-  // Add method to test token validity
-  async testTokenValidity(): Promise<boolean> {
-    try {
-      console.log("🧪 Testing token validity...");
-
-      const token = await authService.getToken();
-      console.log("🔍 Raw token from storage:", token);
-
-      if (!token) {
-        console.error("❌ No token found");
-        return false;
-      }
-
-      // Test with a simple API call
-      const response = await fetch(`${this.baseURL}/auth/verify-token`, {
-        method: "GET",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
+  respondToCall(
+    callId: string,
+    patientId: string,
+    accepted: boolean,
+    roomId?: string
+  ): void {
+    if (this.callSocket?.connected) {
+      console.log("📞 Responding to call via socket:", {
+        callId,
+        patientId,
+        accepted,
       });
+      this.callSocket.emit("call_response", {
+        callId,
+        patientId,
+        accepted,
+        ...(roomId && { roomId }),
+      });
+    }
+  }
 
-      console.log("🧪 Token test response status:", response.status);
+  notifyCallStarted(data: {
+    appointmentId: string;
+    callId: string;
+    channelName: string;
+    patientId: string;
+    doctorId: string;
+    initiatedBy: string;
+  }): void {
+    if (this.callSocket?.connected) {
+      console.log("📞 Notifying call started:", data);
+      this.callSocket.emit("call_started", data);
+    }
+  }
 
-      if (response.ok) {
-        const result = await response.json();
-        console.log("✅ Token is valid:", result);
-        return true;
-      } else {
-        const error = await response.json().catch(() => ({}));
-        console.error("❌ Token is invalid:", error);
-        return false;
-      }
-    } catch (error) {
-      console.error("❌ Error testing token:", error);
-      return false;
+  notifyCallEnded(callId: string, userId: string): void {
+    if (this.callSocket?.connected) {
+      console.log("📞 Notifying call ended:", { callId, userId });
+      this.callSocket.emit("call_ended", { callId, userId });
     }
   }
 
@@ -988,58 +930,6 @@ class ChatService {
     if (role === "patient") return room.unreadCountPatient || 0;
     if (role === "doctor") return room.unreadCountDoctor || 0;
     return 0;
-  }
-
-  // Helper method to get other participant info - with null checks
-  getOtherParticipant(
-    room: ChatRoom,
-    currentUserId: string
-  ): { id: string; name: string; avatar?: string } {
-    const role = this.getCurrentUserRole(room, currentUserId);
-
-    if (role === "patient" && room.doctorId) {
-      return {
-        id: room.doctorId._id,
-        name: room.doctorId.fullName || "Unknown Doctor",
-        avatar: room.doctorId.photoUrl,
-      };
-    } else if (role === "doctor" && room.patientId) {
-      return {
-        id: room.patientId._id,
-        name: room.patientId.fullName || "Unknown Patient",
-        avatar: room.patientId.avatarUrl,
-      };
-    } else {
-      // Fallback when role detection fails or participant data is missing
-      console.warn("⚠️ Could not determine other participant:", {
-        role,
-        currentUserId,
-        hasPatientId: !!room.patientId,
-        hasDoctorId: !!room.doctorId,
-      });
-
-      // Try to return the other participant based on available data
-      if (room.patientId && room.patientId._id !== currentUserId) {
-        return {
-          id: room.patientId._id,
-          name: room.patientId.fullName || "Unknown Patient",
-          avatar: room.patientId.avatarUrl,
-        };
-      } else if (room.doctorId && room.doctorId._id !== currentUserId) {
-        return {
-          id: room.doctorId._id,
-          name: room.doctorId.fullName || "Unknown Doctor",
-          avatar: room.doctorId.photoUrl,
-        };
-      } else {
-        // Last resort fallback
-        return {
-          id: "unknown",
-          name: "Unknown User",
-          avatar: undefined,
-        };
-      }
-    }
   }
 
   // Utility methods for file uploads
@@ -1394,11 +1284,11 @@ class ChatService {
       authService
         .getUserData()
         .then((currentUser) => {
-          if (senderId === currentUser.id) {
+          if (senderId === currentUser?.id) {
             message.senderId = {
               _id: senderId,
-              fullName: currentUser.fullName || "Bạn",
-              avatarUrl: currentUser.avatarUrl,
+              fullName: currentUser?.fullName || "Bạn",
+              avatarUrl: currentUser?.avatarUrl,
             };
           } else {
             if (
@@ -1502,7 +1392,6 @@ class ChatService {
       console.log("🧹 Cleaned processed messages cache:", oldSize, "-> 0");
     }, 5 * 60 * 1000);
   }
-
   private clearProcessedMessages(): void {
     this.processedMessages.clear();
     this.lastMessageProcessTime.clear();
@@ -1511,6 +1400,225 @@ class ChatService {
       this.messageProcessingTimeout = null;
     }
     console.log("🧹 Cleared processed messages cache and timestamps");
+  }
+
+  // Event handler registration
+  setEventHandlers(handlers: ChatEventHandlers): void {
+    this.eventHandlers = { ...this.eventHandlers, ...handlers };
+  }
+
+  // WebSocket message sending - Match BE's expected events
+  sendTypingStatus(roomId: string, isTyping: boolean): void {
+    if (this.socket?.connected) {
+      authService
+        .getUserData()
+        .then((userInfo) => {
+          if (isTyping) {
+            console.log("✍️ Sending typing_start to backend");
+            this.socket?.emit("typing_start", {
+              roomId,
+              userId: userInfo?.id || "unknown",
+              userName: userInfo?.fullName || "User",
+            });
+          } else {
+            console.log("✍️ Sending typing_stop to backend");
+            this.socket?.emit("typing_stop", {
+              roomId,
+              userId: userInfo?.id || "unknown",
+            });
+          }
+        })
+        .catch((error) => {
+          console.warn("⚠️ Could not get user info for typing");
+        });
+    }
+  }
+
+  // Immediate room join (used in connected event)
+  private joinRoomImmediately(roomId: string): void {
+    if (this.socket?.connected) {
+      console.log("🏠 IMMEDIATE room join:", roomId);
+
+      authService
+        .getUserData()
+        .then((userInfo) => {
+          const joinData = {
+            roomId,
+            userId: userInfo?.id || "unknown",
+          };
+
+          console.log("🏠 Emitting join_room with data:", joinData);
+          this.socket?.emit("join_room", joinData);
+
+          this.pendingRoomId = null; // Clear pending room ID
+        })
+        .catch((error) => {
+          console.warn(
+            "⚠️ Could not get user info for immediate room join:",
+            error
+          );
+        });
+    }
+  }
+
+  // Auto-join room when connection is established
+  autoJoinRoom(roomId: string): void {
+    if (!roomId) {
+      console.warn("⚠️ Cannot auto-join: no room ID provided");
+      return;
+    }
+
+    console.log("🏠 Setting up auto-join for room:", roomId);
+    this.pendingRoomId = roomId;
+
+    if (this.socket?.connected && this.connectionState) {
+      console.log("🏠 WebSocket ready, joining room immediately");
+      this.joinRoomImmediately(roomId);
+    } else {
+      console.log("🏠 WebSocket not ready, will auto-join when connected");
+    }
+  }
+
+  joinRoom(roomId: string): void {
+    if (this.socket?.connected) {
+      console.log("🏠 Manual room join:", roomId);
+      this.joinRoomImmediately(roomId);
+    } else {
+      console.warn(
+        "⚠️ Cannot join room: WebSocket not connected, storing for auto-join"
+      );
+      this.pendingRoomId = roomId;
+    }
+  }
+
+  leaveRoom(roomId: string): void {
+    if (this.socket?.connected) {
+      console.log("🚪 Leaving room via BE event:", roomId);
+
+      authService
+        .getUserData()
+        .then((userInfo) => {
+          console.log("🚪 Emitting leave_room to backend");
+          this.socket?.emit("leave_room", {
+            roomId,
+            userId: userInfo?.id || "unknown",
+          });
+        })
+        .catch((error) => {
+          console.warn("⚠️ Could not get user info for leaving room");
+        });
+    } else {
+      console.warn("⚠️ Cannot leave room: WebSocket not connected");
+    }
+  }
+
+  // Add ping method as BE suggests
+  ping(): void {
+    if (this.socket?.connected) {
+      console.log("🏓 Sending ping to server");
+      this.socket?.emit("ping");
+    }
+  }
+
+  // Update token when user logs in/out
+  updateToken(token: string | null): void {
+    console.log(
+      "🔑 Updating auth token:",
+      token ? `${token.substring(0, 50)}...` : "null"
+    );
+
+    // Validate token format before setting
+    if (token) {
+      const parts = token.split(".");
+      console.log("🔍 New token validation:");
+      console.log("   Parts count:", parts.length);
+      console.log("   Starts with 'eyJ':", token.startsWith("eyJ"));
+      console.log("   Length:", token.length);
+
+      if (parts.length !== 3) {
+        console.error("❌ Invalid JWT format provided to updateToken");
+        return;
+      }
+    }
+
+    this.token = token;
+
+    if (this.socket?.connected) {
+      console.log("🔄 Reconnecting WebSocket with new token...");
+      // Reconnect with new token
+      this.disconnect();
+      if (token) {
+        this.connect().catch(console.error);
+      }
+    }
+  }
+
+  // Health check - Keep method name, use renamed property
+  isConnected(): boolean {
+    const connected = this.socket?.connected && this.connectionState;
+    console.log("🔍 WebSocket connection status:", connected);
+    return connected;
+  }
+
+  getConnectionState(): string {
+    if (!this.socket) {
+      console.log("🔍 WebSocket state: disconnected (no socket)");
+      return "disconnected";
+    }
+
+    const isSocketConnected = this.socket.connected;
+    const isAuthenticated = this.connectionState;
+
+    console.log("🔍 WebSocket connection details:", {
+      socketConnected: isSocketConnected,
+      authenticated: isAuthenticated,
+      finalState:
+        isSocketConnected && isAuthenticated ? "connected" : "connecting",
+    });
+
+    const state =
+      isSocketConnected && isAuthenticated ? "connected" : "connecting";
+    console.log("🔍 WebSocket state:", state);
+    return state;
+  }
+
+  // Add method to test token validity
+  async testTokenValidity(): Promise<boolean> {
+    try {
+      console.log("🧪 Testing token validity...");
+
+      const token = await authService.getToken();
+      console.log("🔍 Raw token from storage:", token);
+
+      if (!token) {
+        console.error("❌ No token found");
+        return false;
+      }
+
+      // Test with a simple API call
+      const response = await fetch(`${this.baseURL}/auth/verify-token`, {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+      });
+
+      console.log("🧪 Token test response status:", response.status);
+
+      if (response.ok) {
+        const result = await response.json();
+        console.log("✅ Token is valid:", result);
+        return true;
+      } else {
+        const error = await response.json().catch(() => ({}));
+        console.error("❌ Token is invalid:", error);
+        return false;
+      }
+    } catch (error) {
+      console.error("❌ Error testing token:", error);
+      return false;
+    }
   }
 }
 
@@ -1524,6 +1632,5 @@ export type {
   ChatEventHandlers,
   ChatRoom,
   CreateRoomRequest,
-  Message,
   SendMessageRequest,
 };
