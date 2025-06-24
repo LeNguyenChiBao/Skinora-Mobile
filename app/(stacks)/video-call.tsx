@@ -132,8 +132,7 @@ export default function VideoCallScreen() {
     isInitiator, // Add isInitiator for chat-based calls
     otherParticipantName, // Add for chat-based calls
     otherParticipantAvatar, // Add for chat-based calls
-  } = useLocalSearchParams();
-  const { endCall } = useNotifications();
+  } = useLocalSearchParams();  const { endCall } = useNotifications();
   const { clearCallState } = useIncomingCalls(); // Add hook to clear call state
   const {
     startCall: startCallIndicator,
@@ -2161,12 +2160,10 @@ export default function VideoCallScreen() {
               }
 
               endCallIndicator();
-              clearCallState(); // Clear incoming call state
               router.back();
             } catch (error) {
               console.error("Error ending call:", error);
               endCallIndicator();
-              clearCallState(); // Clear incoming call state on error too
               router.back();
             }
           },

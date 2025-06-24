@@ -52,13 +52,6 @@ export default function WelcomeScreen() {
             <Text style={styles.signUpButtonText}>Đăng ký</Text>
           </TouchableOpacity>
         </View>
-
-        <TouchableOpacity
-          style={styles.skipButton}
-          onPress={() => router.push("/(tabs)")}
-        >
-          <Text style={styles.skipButtonText}>Bỏ qua</Text>
-        </TouchableOpacity>
       </View>
     </SafeAreaView>
   );

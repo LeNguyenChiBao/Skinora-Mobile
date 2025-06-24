@@ -10,8 +10,10 @@ import { useEffect, useState } from "react";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import "react-native-reanimated";
 
+import AuthGuard from "@/components/AuthGuard";
 import { CallManager } from "@/components/CallManager";
 import { useColorScheme } from "@/hooks/useColorScheme";
+import { useEmailVerificationDeepLink } from "@/hooks/useEmailVerificationDeepLink";
 import { authService } from "@/services/authServices.service";
 
 export default function RootLayout() {
@@ -20,6 +22,9 @@ export default function RootLayout() {
     SpaceMono: require("../assets/fonts/SpaceMono-Regular.ttf"),
   });
   const [isLoggedIn, setIsLoggedIn] = useState<boolean | null>(null);
+
+  // Initialize deep link handler
+  useEmailVerificationDeepLink();
 
   useEffect(() => {
     checkAuthStatus();
@@ -41,23 +46,27 @@ export default function RootLayout() {
   }
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
-      <ThemeProvider value={colorScheme === "dark" ? DarkTheme : DefaultTheme}>
-        <>
-          <Stack
-            screenOptions={{
-              headerShown: false,
-            }}
-            initialRouteName={isLoggedIn ? "(tabs)" : "welcome"}
-          >
-            <Stack.Screen name="(stacks)" options={{ headerShown: false }} />
-            <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-            <Stack.Screen name="+not-found" />
-          </Stack>
-          {/* Initialize call manager only when logged in */}
-          {isLoggedIn && <CallManager />}
-        </>
-        <StatusBar style="auto" />
-      </ThemeProvider>
+      <AuthGuard>
+        <ThemeProvider
+          value={colorScheme === "dark" ? DarkTheme : DefaultTheme}
+        >
+          <>
+            <Stack
+              screenOptions={{
+                headerShown: false,
+              }}
+              initialRouteName={isLoggedIn ? "(tabs)" : "welcome"}
+            >
+              <Stack.Screen name="(stacks)" options={{ headerShown: false }} />
+              <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+              <Stack.Screen name="+not-found" />
+            </Stack>
+            {/* Initialize call manager only when logged in */}
+            {isLoggedIn && <CallManager />}
+          </>
+          <StatusBar style="auto" />
+        </ThemeProvider>
+      </AuthGuard>
     </GestureHandlerRootView>
   );
 }

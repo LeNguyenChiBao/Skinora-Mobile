@@ -18,7 +18,8 @@
           "PaymentSuccess": "payment/success",
           "PaymentCancel": "payment/cancel",
           "(stacks)/payment-success": "payment/success",
-          "(stacks)/payment-cancel": "payment/cancel"
+          "(stacks)/payment-cancel": "payment/cancel",
+          "(stacks)/verify-email": "verify-email"
         }
       }
     },

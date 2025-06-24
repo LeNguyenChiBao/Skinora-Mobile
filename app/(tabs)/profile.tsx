@@ -1,9 +1,11 @@
+import VerificationBanner from "@/components/VerificationBanner";
 import {
   authService,
   UpdateUserRequest,
   User,
 } from "@/services/authServices.service";
 import { userService } from "@/services/user.service";
+import { refreshAuthState } from "@/utils/authEvents";
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import React, { useEffect, useState } from "react";
@@ -133,9 +135,14 @@ export default function ProfileScreen() {
         onPress: async () => {
           try {
             await authService.logout();
-            router.replace("/welcome");
+            setTimeout(() => {
+              refreshAuthState();
+            }, 100);
           } catch (error) {
             console.error("Logout error:", error);
+            setTimeout(() => {
+              refreshAuthState();
+            }, 100);
           }
         },
       },
@@ -201,7 +208,6 @@ export default function ProfileScreen() {
       .join("")
       .toUpperCase();
   };
-
   return (
     <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
       <View style={styles.header}>
@@ -213,6 +219,9 @@ export default function ProfileScreen() {
         <Text style={styles.userName}>{user?.fullName || "Người dùng"}</Text>
         <Text style={styles.userRole}>{user?.role || "Khách hàng"}</Text>
       </View>
+
+      {/* Verification Banner */}
+      <VerificationBanner user={user} />
 
       {user ? (
         <>
@@ -345,19 +354,19 @@ export default function ProfileScreen() {
                 onPress={() => router.push("/(stacks)/my-appointments")}
               >
                 <View style={styles.actionButtonContent}>
-                  <Ionicons name="calendar-outline" size={20} color="#00A86B" />
+                  <Ionicons name="calendar-outline" size={20} color="#00A86L" />
                   <Text style={styles.actionText}>Lịch hẹn của tôi</Text>
                 </View>
               </TouchableOpacity>
               <TouchableOpacity style={styles.actionButton}>
                 <View style={styles.actionButtonContent}>
-                  <Ionicons name="key-outline" size={20} color="#00A86B" />
+                  <Ionicons name="key-outline" size={20} color="#00A86L" />
                   <Text style={styles.actionText}>Đổi mật khẩu</Text>
                 </View>
               </TouchableOpacity>
               <TouchableOpacity style={styles.actionButton}>
                 <View style={styles.actionButtonContent}>
-                  <Ionicons name="settings-outline" size={20} color="#00A86B" />
+                  <Ionicons name="settings-outline" size={20} color="#00A86L" />
                   <Text style={styles.actionText}>Cài đặt</Text>
                 </View>
               </TouchableOpacity>

@@ -195,7 +195,10 @@ class AuthService {
     }
   }
 
-  async updateUser(userId: string, data: UpdateUserRequest): Promise<UpdateUserResponse> {
+  async updateUser(
+    userId: string,
+    data: UpdateUserRequest
+  ): Promise<UpdateUserResponse> {
     try {
       const token = await this.getToken();
       if (!token) {
@@ -228,7 +231,7 @@ class AuthService {
         };
 
         await this.storeUserData(updatedUser);
-        
+
         return {
           success: true,
           data: {
@@ -256,7 +259,8 @@ class AuthService {
       if (error.response) {
         return {
           success: false,
-          message: error.response.data?.message || "Cập nhật thông tin thất bại",
+          message:
+            error.response.data?.message || "Cập nhật thông tin thất bại",
         };
       } else if (error.request) {
         return {
@@ -353,6 +357,88 @@ class AuthService {
     } catch (error) {
       console.error("Error checking login status:", error);
       return false;
+    }
+  }
+
+  // Verify email with token
+  async verifyEmail(
+    token: string
+  ): Promise<{ success: boolean; message?: string }> {
+    try {
+      const response = await this.api.post("/auth/verify-email", { token });
+      return {
+        success: true,
+        message: response.data?.message || "Email verified successfully",
+      };
+    } catch (error: any) {
+      console.error("Email verification error:", error);
+
+      if (error.code === "ECONNABORTED") {
+        return {
+          success: false,
+          message: "Kết nối quá lâu. Vui lòng thử lại.",
+        };
+      }
+
+      if (error.response) {
+        return {
+          success: false,
+          message: error.response.data?.message || "Xác thực email thất bại",
+        };
+      } else if (error.request) {
+        return {
+          success: false,
+          message: "Lỗi kết nối đến máy chủ. Kiểm tra kết nối mạng.",
+        };
+      } else {
+        return {
+          success: false,
+          message: "Có lỗi xảy ra. Vui lòng thử lại.",
+        };
+      }
+    }
+  }
+
+  // Resend verification email
+  async resendVerification(
+    email: string
+  ): Promise<{ success: boolean; message?: string }> {
+    try {
+      const response = await this.api.post("/auth/resend-verification", {
+        email,
+      });
+      return {
+        success: true,
+        message:
+          response.data?.message || "Verification email sent successfully",
+      };
+    } catch (error: any) {
+      console.error("Resend verification error:", error);
+
+      if (error.code === "ECONNABORTED") {
+        return {
+          success: false,
+          message: "Kết nối quá lâu. Vui lòng thử lại.",
+        };
+      }
+
+      if (error.response) {
+        return {
+          success: false,
+          message:
+            error.response.data?.message || "Gửi email xác thực thất bại",
+        };
+      } else if (error.request) {
+        return {
+          success: false,
+          message: "Lỗi kết nối đến máy chủ. Kiểm tra kết nối mạng.",
+        };
+      } else {
+        return {
+          success: false,
+          message: "Có lỗi xảy ra. Vui lòng thử lại.",
+        };
+      }
     }
   }
 }

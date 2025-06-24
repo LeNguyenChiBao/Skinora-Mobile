@@ -1,20 +1,21 @@
 import { authService } from "@/services/authServices.service";
+import { refreshAuthState } from "@/utils/authEvents";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import React, { useState } from "react";
 import {
-    ActivityIndicator,
-    Alert,
-    KeyboardAvoidingView,
-    Platform,
-    SafeAreaView,
-    ScrollView,
-    StatusBar,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View,
+  ActivityIndicator,
+  Alert,
+  KeyboardAvoidingView,
+  Platform,
+  SafeAreaView,
+  ScrollView,
+  StatusBar,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from "react-native";
 
 export default function LoginScreen() {
@@ -23,7 +24,6 @@ export default function LoginScreen() {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-
   const handleLogin = async () => {
     if (!email || !password) {
       Alert.alert("Lỗi", "Vui lòng nhập đầy đủ thông tin");
@@ -38,9 +38,41 @@ export default function LoginScreen() {
       if (response.success && response.data) {
         console.log("Login successful, token stored");
         console.log("User:", response.data.user.fullName);
+        // Đảm bảo dữ liệu đã lưu xong trước khi refresh auth state
+        setTimeout(() => {
+          refreshAuthState();
+        }, 100);
 
-        // Navigate to main app immediately after successful login
+         // Check if user email is verified
+        if (!response.data.user.isVerified) {
+          console.log("User email not verified, redirecting to verify screen");
+
+          // Show verification required alert
+          Alert.alert(
+            "📧 Xác thực email cần thiết",
+            "Tài khoản của bạn chưa được xác thực. Vui lòng kiểm tra email để xác thực tài khoản.",
+            [
+              {
+                text: "Xác thực ngay",
+                onPress: () =>
+                  router.replace({
+                    pathname: "/(stacks)/verify-email",
+                    params: { email: response.data!.user.email },
+                  }),
+              },
+              {
+                text: "Bỏ qua",
+                style: "cancel",
+                onPress: () => router.replace("/(tabs)"),
+              },
+            ]
+          );
+          return;
+        }
+
+        // Navigate to main app if verified
         router.replace("/(tabs)");
+        // AuthGuard will automatically handle redirect based on verification status
       } else {
         Alert.alert("Lỗi", response.message || "Đăng nhập thất bại");
       }
@@ -150,7 +182,9 @@ export default function LoginScreen() {
 
             <View style={styles.signupContainer}>
               <Text style={styles.signupText}>Chưa có tài khoản? </Text>
-              <TouchableOpacity onPress={() => router.push("/(stacks)/register")}>
+              <TouchableOpacity
+                onPress={() => router.push("/(stacks)/register")}
+              >
                 <Text style={styles.signupLink}>Đăng ký ngay</Text>
               </TouchableOpacity>
             </View>
@@ -185,7 +219,7 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 24,
     fontWeight: "bold",
-    color: "#00A86B",
+    color: "#00A86L",
   },
   form: {
     flex: 1,

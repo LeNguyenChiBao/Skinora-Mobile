@@ -123,8 +123,7 @@ export const useIncomingCalls = () => {
       }
     },
     []
-  );
-  const handleAcceptCall = useCallback(
+  );  const handleAcceptCall = useCallback(
     async (callId: string) => {
       try {
         console.log("🔍 Accept call - Raw callId:", callId, typeof callId);
@@ -189,8 +188,7 @@ export const useIncomingCalls = () => {
     } catch (error: any) {
       console.error("❌ Error declining call:", error);
     }
-  }, []);
-  const handleCallEnded = useCallback(
+  }, []);  const handleCallEnded = useCallback(
     (data: { callId: string; endedBy: string; duration?: number }) => {
       console.log("📞 Call ended:", data);
       setIncomingCall(null);
@@ -231,21 +229,14 @@ export const useIncomingCalls = () => {
       }
     },
     []
-  ); // Debug function to check connection and active calls
+  );  // Debug function to check connection and active calls
   const debugIncomingCalls = useCallback(async () => {
     console.log("🔍 === INCOMING CALLS DEBUG ===");
-    console.log(
-      "🔍 Current state - isInCall:",
-      isInCall,
-      "showOverlay:",
-      showOverlay
-    );
+    console.log("🔍 Current state - isInCall:", isInCall, "showOverlay:", showOverlay);
 
     // Don't show overlay if user is already in a call
     if (isInCall || showOverlay) {
-      console.log(
-        "⏭️ Skipping debug - user is in call or overlay already shown"
-      );
+      console.log("⏭️ Skipping debug - user is in call or overlay already shown");
       return;
     }
 
