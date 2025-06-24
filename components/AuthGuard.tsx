@@ -111,7 +111,13 @@ export default function AuthGuard({ children }: AuthGuardProps) {
         if (
           inTabsGroup ||
           (inAuthGroup &&
-            !["login", "register", "welcome"].includes(currentScreen))
+            ![
+              "login",
+              "register",
+              "welcome",
+              "forgot-password",
+              "reset-password",
+            ].includes(currentScreen))
         ) {
           console.log("🔄 Redirecting to welcome (not authenticated)");
           router.replace("/welcome");

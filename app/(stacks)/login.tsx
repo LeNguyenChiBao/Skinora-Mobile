@@ -43,7 +43,7 @@ export default function LoginScreen() {
           refreshAuthState();
         }, 100);
 
-         // Check if user email is verified
+        // Check if user email is verified
         if (!response.data.user.isVerified) {
           console.log("User email not verified, redirecting to verify screen");
 
@@ -134,7 +134,12 @@ export default function LoginScreen() {
               </View>
             </View>
 
-            <TouchableOpacity style={styles.forgotPassword}>
+            <TouchableOpacity
+              onPress={() => {
+                router.push("/(stacks)/forgot-password");
+              }}
+              style={styles.forgotPassword}
+            >
               <Text style={styles.forgotPasswordText}>Quên mật khẩu?</Text>
             </TouchableOpacity>
 

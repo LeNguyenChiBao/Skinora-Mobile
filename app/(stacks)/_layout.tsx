@@ -38,6 +38,16 @@ export default function StackLayout() {
         }}
         name="forgot-password"
       />
+      <Stack.Screen
+        options={{
+          title: "Đặt lại mật khẩu",
+          headerStyle: {
+            backgroundColor: "#E8F5E8",
+          },
+          headerTintColor: "#00A86B",
+        }}
+        name="reset-password"
+      />
       <Stack.Screen name="index" options={{ headerShown: false }} />
       <Stack.Screen name="skin-analysis" options={{ headerShown: false }} />
       <Stack.Screen name="my-appointments" options={{ headerShown: false }} />

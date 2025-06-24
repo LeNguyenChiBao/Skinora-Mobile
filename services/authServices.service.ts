@@ -441,6 +441,59 @@ class AuthService {
       }
     }
   }
+
+  // Forgot password - gửi OTP về email
+  async forgotPassword(
+    email: string
+  ): Promise<{ success: boolean; message: string }> {
+    try {
+      const response = await this.api.post("/auth/forgot-password", {
+        email,
+        isMobile: true,
+      });
+      return {
+        success: true,
+        message: response.data.message || "OTP đã được gửi về email!",
+      };
+    } catch (error: any) {
+      return {
+        success: false,
+        message:
+          error.response?.data?.message ||
+          "Không thể gửi OTP. Vui lòng thử lại!",
+      };
+    }
+  }
+
+  // Reset password bằng OTP
+  async resetPasswordOtp({
+    email,
+    otp,
+    newPassword,
+  }: {
+    email: string;
+    otp: string;
+    newPassword: string;
+  }): Promise<{ success: boolean; message: string }> {
+    try {
+      const response = await this.api.post("/auth/reset-password-otp", {
+        email,
+        otp,
+        newPassword,
+      });
+      return {
+        success: true,
+        message: response.data.message || "Đổi mật khẩu thành công!",
+      };
+    } catch (error: any) {
+      return {
+        success: false,
+        message:
+          error.response?.data?.message ||
+          "Không thể đổi mật khẩu. Vui lòng thử lại!",
+      };
+    }
+  }
 }
 
 export const authService = new AuthService();
