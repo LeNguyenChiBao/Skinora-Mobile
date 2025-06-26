@@ -1,3 +1,4 @@
+import { refreshAuthState } from "@/utils/authEvents";
 import { MaterialIcons } from "@expo/vector-icons";
 import { router, useLocalSearchParams } from "expo-router";
 import React, { useEffect, useState } from "react";
@@ -111,6 +112,30 @@ export default function VerifyEmailScreen() {
     }
   };
 
+  const handleLogout = async () => {
+      Alert.alert("Đăng xuất", "Bạn có chắc chắn muốn đăng xuất?", [
+        { text: "Hủy", style: "cancel" },
+        {
+          text: "Đăng xuất",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              await authService.logout();
+              setTimeout(() => {
+                refreshAuthState();
+              }, 100);
+            } catch (error) {
+              console.error("Logout error:", error);
+              setTimeout(() => {
+                refreshAuthState();
+              }, 100);
+            }
+          },
+        },
+      ]);
+    };
+  
+
   if (isLoading) {
     return (
       <SafeAreaView style={styles.container}>
@@ -156,6 +181,9 @@ export default function VerifyEmailScreen() {
                     : "Gửi lại email"}
                 </Text>
               )}
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => handleLogout()}>
+              <Text>Logout</Text>
             </TouchableOpacity>
           </View>
           <View style={styles.helpContainer}>

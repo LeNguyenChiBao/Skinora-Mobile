@@ -243,6 +243,7 @@ const styles = StyleSheet.create({
     paddingVertical: 20,
     backgroundColor: 'white',
     color: '#00A86B',
+    marginTop: 20,
   },
   loadingContainer: {
     flex: 1,

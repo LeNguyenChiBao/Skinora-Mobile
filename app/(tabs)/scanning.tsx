@@ -17,7 +17,9 @@ import {
 import {
   AnalysisResult,
   analyzeImage,
-  uploadImageToFirebase,
+  checkAnalysisEligibility,
+  translateSubscriptionMessage,
+  uploadImageToFirebase
 } from "../../services/scanning.service";
 
 export default function ScanningScreen() {
@@ -29,6 +31,10 @@ export default function ScanningScreen() {
   const [selectedFaceArea, setSelectedFaceArea] = useState<string | null>(null);
   const [showModel, setShowModel] = useState<boolean>(true);
   const [showProductModal, setShowProductModal] = useState<boolean>(false);
+  const [eligibilityLoading, setEligibilityLoading] = useState<boolean>(false);
+  const [eligibilityChecked, setEligibilityChecked] = useState<boolean>(false);
+  const [canAnalyze, setCanAnalyze] = useState<boolean>(false);
+  const [eligibilityMessage, setEligibilityMessage] = useState<string>("");
 
   useEffect(() => {
     (async () => {
@@ -44,6 +50,9 @@ export default function ScanningScreen() {
       ) {
         alert("Permission to access camera and media library is required!");
       }
+
+      // Check eligibility when screen loads
+      await checkEligibility();
     })();
   }, []);
 
@@ -107,6 +116,19 @@ export default function ScanningScreen() {
       return;
     }
 
+    // Check eligibility before analysis
+    if (!eligibilityChecked) {
+      await checkEligibility();
+    }
+
+    if (!canAnalyze) {
+      Alert.alert(
+        "Không thể phân tích", 
+        eligibilityMessage || translateSubscriptionMessage("You are not eligible for skin analysis at this time")
+      );
+      return;
+    }
+
     setLoading(true);
 
     try {
@@ -127,6 +149,15 @@ export default function ScanningScreen() {
       }
 
       setPrediction(result);
+
+      // If analysis failed due to eligibility issues, refresh eligibility status
+      if (!result.success && result.error && (
+          result.error.includes("đăng ký") || 
+          result.error.includes("lượt phân tích") || 
+          result.error.includes("gói"))) {
+        console.log("Analysis failed due to eligibility, refreshing eligibility status");
+        await checkEligibility();
+      }
     } catch (error) {
       console.error("Prediction failed:", error);
       Alert.alert("Error", "Skin analysis failed. Please try again.");
@@ -156,6 +187,33 @@ export default function ScanningScreen() {
     setShowModel(false);
   };
 
+  const checkEligibility = async () => {
+    setEligibilityLoading(true);
+    try {
+      const result = await checkAnalysisEligibility();
+
+      if ('error' in result) {
+        setCanAnalyze(false);
+        setEligibilityMessage(result.error);
+        // Don't show alert on initial load, only show when user tries to analyze
+      } else {
+        setCanAnalyze(result.data.canAnalyze);
+        setEligibilityMessage(translateSubscriptionMessage(result.data.message));
+        
+        // Don't show alert on initial load if user can't analyze
+        // The alert will be shown when they try to analyze
+      }
+      setEligibilityChecked(true);
+    } catch (error) {
+      console.error("Error checking eligibility:", error);
+      setCanAnalyze(false);
+      setEligibilityMessage(translateSubscriptionMessage("Failed to check analysis eligibility"));
+      // Don't show alert on initial load
+    } finally {
+      setEligibilityLoading(false);
+    }
+  };
+
   return (
     <SafeAreaView style={styles.safeArea}>
       <ScrollView
@@ -163,12 +221,46 @@ export default function ScanningScreen() {
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.container}>
-          <Text style={styles.title}>Skin Analysis</Text>
+          <Text style={styles.title}>Phân tích da</Text>
           <Text style={styles.subtitle}>
             {showModel
               ? "Chọn vùng da cần phân tích"
               : "Upload a clear photo of your skin for analysis"}
           </Text>
+
+          {/* Eligibility Status Banner */}
+          {eligibilityLoading ? (
+            <View style={styles.eligibilityBanner}>
+              <ActivityIndicator size="small" color="#4285F4" />
+              <Text style={styles.eligibilityText}>Đang kiểm tra quyền phân tích...</Text>
+            </View>
+          ) : eligibilityChecked && (
+            <View style={[
+              styles.eligibilityBanner, 
+              canAnalyze ? styles.eligibilitySuccess : styles.eligibilityError
+            ]}>
+              <Ionicons 
+                name={canAnalyze ? "checkmark-circle" : "alert-circle"} 
+                size={16} 
+                color={canAnalyze ? "#00A86B" : "#e74c3c"} 
+              />
+              <Text style={[
+                styles.eligibilityText,
+                canAnalyze ? styles.eligibilitySuccessText : styles.eligibilityErrorText
+              ]}>
+                {eligibilityMessage}
+              </Text>
+              {!canAnalyze && (
+                <TouchableOpacity 
+                  style={styles.refreshEligibilityButton}
+                  onPress={checkEligibility}
+                >
+                  <Ionicons name="refresh" size={14} color="#e74c3c" />
+                </TouchableOpacity>
+              )}
+            </View>
+          )}
+
           <>
             <View style={styles.imageContainer}>
               {image ? (
@@ -188,9 +280,9 @@ export default function ScanningScreen() {
               ) : (
                 <View style={styles.placeholderContainer}>
                   <Ionicons name="image-outline" size={50} color="#a0a0a0" />
-                  <Text style={styles.placeholderText}>No image selected</Text>
+                  <Text style={styles.placeholderText}>Bạn chưa chọn ảnh</Text>
                   <Text style={styles.placeholderSubtext}>
-                    Take or upload a photo to begin
+                    Chụp hoặc tải ảnh từ thư viện để phân tích
                   </Text>
                 </View>
               )}
@@ -208,7 +300,7 @@ export default function ScanningScreen() {
                   color="white"
                   style={styles.buttonIcon}
                 />
-                <Text style={styles.buttonText}>Take Photo</Text>
+                <Text style={styles.buttonText}>Chụp ảnh</Text>
               </TouchableOpacity>
 
               <TouchableOpacity
@@ -222,24 +314,24 @@ export default function ScanningScreen() {
                   color="white"
                   style={styles.buttonIcon}
                 />
-                <Text style={styles.buttonText}>Gallery</Text>
+                <Text style={styles.buttonText}>Thư viện</Text>
               </TouchableOpacity>
             </View>
 
             {uploading ? (
               <View style={styles.loadingContainer}>
                 <ActivityIndicator size="large" color="#4285F4" />
-                <Text style={styles.loadingText}>Uploading image...</Text>
+                <Text style={styles.loadingText}>Đang tải ảnh...</Text>
               </View>
             ) : (
               firebaseUrl && (
                 <TouchableOpacity
                   style={[
                     styles.analyzeButton,
-                    loading && styles.disabledButton,
+                    (loading || !canAnalyze) && styles.disabledButton,
                   ]}
                   onPress={analyzeSkin}
-                  disabled={loading}
+                  disabled={loading || !canAnalyze}
                   activeOpacity={0.8}
                 >
                   {loading ? (
@@ -249,7 +341,7 @@ export default function ScanningScreen() {
                         color="#fff"
                         style={styles.buttonLoader}
                       />
-                      <Text style={styles.analyzeButtonText}>Analyzing...</Text>
+                      <Text style={styles.analyzeButtonText}>Đang phân tích...</Text>
                     </>
                   ) : (
                     <>
@@ -259,7 +351,7 @@ export default function ScanningScreen() {
                         color="white"
                         style={styles.buttonIcon}
                       />
-                      <Text style={styles.analyzeButtonText}>Analyze Skin</Text>
+                      <Text style={styles.analyzeButtonText}>Phân tích da</Text>
                     </>
                   )}
                 </TouchableOpacity>
@@ -290,7 +382,8 @@ export default function ScanningScreen() {
                     size={24}
                     color={prediction.error ? "#e74c3c" : "#34A853"}
                   />
-                  <Text style={styles.predictionTitle}>Results</Text>
+                  <Text style={styles.predictionTitle}>Kết quả</Text>
+                  <Text>{prediction.data?.result}</Text>
                 </View>
 
                 {prediction.error ? (
@@ -300,7 +393,7 @@ export default function ScanningScreen() {
                       style={styles.retryButton}
                       onPress={analyzeSkin}
                     >
-                      <Text style={styles.retryButtonText}>Try Again</Text>
+                      <Text style={styles.retryButtonText}>Thử lại</Text>
                     </TouchableOpacity>
                   </View>
                 ) : (
@@ -308,7 +401,7 @@ export default function ScanningScreen() {
                   prediction.data && (
                     <View style={styles.resultContainer}>
                       <Text style={styles.predictionText}>
-                        Analysis Result:
+                        Kết quả phân tích:
                       </Text>
                       <Text style={styles.skinType}>
                         {prediction.data.skinType}
@@ -399,21 +492,25 @@ export default function ScanningScreen() {
                         <View key={index} style={styles.productItem}>
                           <View style={styles.productInfo}>
                             <Text style={styles.productName}>
-                              {product.productId?.productName ||
+                              {typeof product.productId === 'object' && product.productId?.productName ||
+                                product.productName ||
                                 `Sản phẩm ${index + 1}`}
                             </Text>
                             <Text style={styles.productBrand}>
-                              {product.productId?.brand}
+                              {typeof product.productId === 'object' && product.productId?.brand ||
+                                product.brand}
                             </Text>
                             <Text style={styles.productDescription}>
                               {product.reason || "Phù hợp với loại da của bạn"}
                             </Text>
-                            {product.productId?.price && (
+                            {((typeof product.productId === 'object' && product.productId?.price) || product.price) && (
                               <Text style={styles.productPrice}>
                                 {new Intl.NumberFormat("vi-VN", {
                                   style: "currency",
                                   currency: "VND",
-                                }).format(product.productId.price)}
+                                }).format(
+                                  (typeof product.productId === 'object' && product.productId?.price) || product.price
+                                )}
                               </Text>
                             )}
                           </View>
@@ -591,6 +688,7 @@ const styles = StyleSheet.create({
   },
   predictionContainer: {
     marginTop: 32,
+    marginBottom: 24,
     backgroundColor: "#fff",
     borderRadius: 16,
     padding: 24,
@@ -891,5 +989,45 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: "#333",
     lineHeight: 24,
+  },
+  // Eligibility styles
+  eligibilityBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#f8f9fa",
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 16,
+    width: "100%",
+    borderWidth: 1,
+  },
+  eligibilitySuccess: {
+    backgroundColor: "#e8f5e8",
+    borderColor: "#00A86B",
+  },
+  eligibilityError: {
+    backgroundColor: "#fef2f2",
+    borderColor: "#e74c3c",
+  },
+  eligibilityText: {
+    fontSize: 14,
+    marginLeft: 8,
+    flex: 1,
+  },
+  eligibilitySuccessText: {
+    color: "#00A86B",
+  },
+  eligibilityErrorText: {
+    color: "#e74c3c",
+  },
+  refreshEligibilityButton: {
+    padding: 4,
+    marginLeft: 8,
+  },
+  viewResultButtonText: {
+    color: "#00A86B",
+    fontSize: 16,
+    fontWeight: "600",
+    marginLeft: 8,
   },
 });

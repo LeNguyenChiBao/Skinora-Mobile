@@ -418,7 +418,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     paddingHorizontal: 20,
-    paddingTop: 20,
+    paddingTop: 30,
     paddingBottom: 10,
     justifyContent: "space-between",
     backgroundColor: "#00A86B", // Always green
@@ -435,7 +435,7 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(255,255,255,0.18)",
     justifyContent: "center",
     alignItems: "center",
-    marginRight: 10,
+    marginRight: 4,
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
@@ -571,7 +571,7 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.06,
     shadowRadius: 4,
     elevation: 2,
-    marginBottom: Platform.OS === "ios" ? 100 : 106,
+    marginBottom: Platform.OS === "ios" ? 100 : 102,
   },
   textInput: {
     flex: 1,
