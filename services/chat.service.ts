@@ -194,6 +194,11 @@ interface IncomingCallData {
   message: string;
 }
 
+// Helper: Validate MongoDB ObjectId
+function isValidObjectId(id: string): boolean {
+  return /^[a-fA-F0-9]{24}$/.test(id);
+}
+
 class ChatService {
   private socket: Socket | null = null;
   private callSocket: Socket | null = null;
@@ -319,6 +324,14 @@ class ChatService {
   // REST API Methods
   async createRoom(data: CreateRoomRequest): Promise<ChatRoom> {
     console.log("🏗️ Creating chat room with data:", data);
+    // Validate appointmentId if present
+    if (data.appointmentId !== undefined && data.appointmentId !== null) {
+      if (!isValidObjectId(data.appointmentId)) {
+        const errMsg = `Invalid appointmentId: '${data.appointmentId}'. Must be a 24-char MongoDB ObjectId.`;
+        console.error("❌", errMsg);
+        throw new Error(errMsg);
+      }
+    }
     const result = await this.apiRequest<ChatRoom>("/chat/rooms", {
       method: "POST",
       body: JSON.stringify(data),
@@ -368,6 +381,12 @@ class ChatService {
 
   async createRoomFromAppointment(appointmentId: string): Promise<ChatRoom> {
     console.log("🏗️ Creating room from appointment ID:", appointmentId);
+
+    if (!isValidObjectId(appointmentId)) {
+      const errMsg = `Invalid appointmentId: ${appointmentId}. Must be a 24-char MongoDB ObjectId.`;
+      console.error("❌", errMsg);
+      throw new Error(errMsg);
+    }
 
     try {
       const result = await this.apiRequest<ChatRoom>(
@@ -575,7 +594,7 @@ class ChatService {
           // Convert HTTP URL to WebSocket URL format
           let wsURL: string;
           if (
-            this.baseURL.includes("api.nhatlonh.id.vn") ||
+            this.baseURL.includes("152.42.219.115") ||
             this.baseURL.includes("127.0.0.1") ||
             this.baseURL.includes("192.168.1.4")
           ) {
@@ -602,7 +621,7 @@ class ChatService {
             reconnectionAttempts: this.maxReconnectAttempts,
             reconnectionDelay: 1000,
             reconnectionDelayMax: 10000,
-            timeout: 10000,
+            timeout: 60000, // Increased timeout to 60s
             forceNew: true,
           });
 
@@ -759,7 +778,7 @@ class ChatService {
               console.error("⏰ WebSocket connection timeout");
               reject(new Error("WebSocket connection timeout"));
             }
-          }, 10000);
+          }, 60000); // Increased timeout to 60s
         })
         .catch((tokenError) => {
           console.error(
@@ -1555,7 +1574,7 @@ class ChatService {
 
   // Health check - Keep method name, use renamed property
   isConnected(): boolean {
-    const connected = this.socket?.connected && this.connectionState;
+    const connected = !!this.socket?.connected && this.connectionState;
     console.log("🔍 WebSocket connection status:", connected);
     return connected;
   }
@@ -1622,9 +1641,11 @@ class ChatService {
   }
 }
 
-const chatService = new ChatService(
-  process.env.EXPO_PUBLIC_API_BASE_URL || "http://192.168.1.4:3000"
-);
+const API_BASE_URL =
+  process.env.EXPO_PUBLIC_API_BASE_URL || "https://localhost:3000";
+const SOCKET_URL = process.env.EXPO_PUBLIC_SOCKET_URL || "ws://localhost:3000";
+
+const chatService = new ChatService(API_BASE_URL); // Chỉ truyền REST API URL
 
 export default chatService;
 export type {
@@ -1632,6 +1653,5 @@ export type {
   ChatEventHandlers,
   ChatRoom,
   CreateRoomRequest,
-  SendMessageRequest
+  SendMessageRequest,
 };
-
