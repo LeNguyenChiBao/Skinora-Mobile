@@ -48,6 +48,8 @@ export default function StackLayout() {
         }}
         name="reset-password"
       />
+      <Stack.Screen name="subscription" options={{ headerShown: false }} />
+      <Stack.Screen name="payment-qr" options={{ headerShown: false }} />
       <Stack.Screen name="index" options={{ headerShown: false }} />
       <Stack.Screen name="skin-analysis" options={{ headerShown: false }} />
       <Stack.Screen name="my-appointments" options={{ headerShown: false }} />

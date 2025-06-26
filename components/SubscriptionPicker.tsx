@@ -1,4 +1,5 @@
 import paymentService from "@/services/payment.service";
+import { useRouter } from "expo-router";
 import React, { useState } from "react";
 import { Alert, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { usePayment } from "../hooks/usePayment";
@@ -38,6 +39,7 @@ const SUBSCRIPTION_PLANS: SubscriptionPlan[] = [
 export const SubscriptionPicker: React.FC = () => {
   const [selectedPlan, setSelectedPlan] = useState<string | null>(null);
   const { isLoading, error } = usePayment();
+  const router = useRouter();
 
   const handleSubscribe = async (): Promise<void> => {
     if (!selectedPlan) {
@@ -46,7 +48,23 @@ export const SubscriptionPicker: React.FC = () => {
     }
 
     try {
-      await paymentService.createPayment(selectedPlan);
+      const res = await paymentService.createPayment({ planId: selectedPlan });
+      console.log("API /payment/create response:", res);
+      if (res && res.data) {
+        router.push({
+          pathname: "/(stacks)/payment-qr",
+          params: {
+            orderCode: res.data.orderCode,
+            amount: res.data.amount,
+            bankAccount: res.data.bankAccount,
+            bankName: res.data.bankName,
+            accountName: res.data.accountName,
+            transferContent: res.data.transferContent,
+          },
+        });
+      } else {
+        Alert.alert("Error", "Không nhận được thông tin thanh toán từ server.");
+      }
     } catch (err) {
       Alert.alert("Error", "Failed to create payment. Please try again.");
     }

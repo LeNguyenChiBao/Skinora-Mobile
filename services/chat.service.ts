@@ -575,7 +575,7 @@ class ChatService {
           // Convert HTTP URL to WebSocket URL format
           let wsURL: string;
           if (
-            this.baseURL.includes("localhost") ||
+            this.baseURL.includes("api.nhatlonh.id.vn") ||
             this.baseURL.includes("127.0.0.1") ||
             this.baseURL.includes("192.168.1.4")
           ) {
@@ -1632,5 +1632,6 @@ export type {
   ChatEventHandlers,
   ChatRoom,
   CreateRoomRequest,
-  SendMessageRequest,
+  SendMessageRequest
 };
+

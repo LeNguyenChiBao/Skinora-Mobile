@@ -1,6 +1,7 @@
-import paymentService from "@/services/payment.service";
-import { useNavigation } from "@react-navigation/native";
-import React, { useState } from "react";
+import { subscriptionService } from "@/services/subscription.service";
+import type { SubscriptionPlan } from "@/types/subscription";
+import { useRouter } from "expo-router";
+import React, { useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -10,72 +11,94 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-import { usePayment } from "../hooks/usePayment";
-import type { SubscriptionPlan } from "../types/payment";
 
-const SUBSCRIPTION_PLANS: SubscriptionPlan[] = [
-  {
-    id: "basic",
-    name: "Gói Cơ Bản",
-    price: "99,000đ/tháng",
-    features: [
-      "Phân tích da cơ bản",
-      "Lời khuyên chăm sóc da",
-      "Theo dõi tiến trình",
-      "Hỗ trợ email",
-    ],
-  },
-  {
-    id: "premium",
-    name: "Gói Premium",
-    price: "199,000đ/tháng",
-    features: [
-      "Tất cả tính năng Cơ Bản",
-      "Phân tích da chi tiết với AI",
-      "Tư vấn sản phẩm cá nhân hóa",
-      "Theo dõi chi tiết",
-      "Hỗ trợ ưu tiên",
-    ],
-  },
-  {
-    id: "pro",
-    name: "Gói Pro",
-    price: "299,000đ/tháng",
-    features: [
-      "Tất cả tính năng Premium",
-      "Tư vấn từ chuyên gia da liễu",
-      "Phân tích xu hướng da",
-      "Báo cáo chi tiết hàng tuần",
-      "Hỗ trợ 24/7",
-    ],
-  },
-];
+const getFeaturesFromPlan = (plan: SubscriptionPlan): string[] => {
+  const features = [];
+  if (plan.description) {
+    features.push(plan.description);
+  }
+  if (plan.aiUsageAmount) {
+    features.push(`${plan.aiUsageAmount} lượt sử dụng AI`);
+  }
+  if (plan.meetingAmount) {
+    features.push(`${plan.meetingAmount} cuộc hẹn`);
+  }
+  if (plan.duration) {
+    const durationText =
+      plan.duration >= 30
+        ? `${Math.floor(plan.duration / 30)} tháng`
+        : `${plan.duration} ngày`;
+    features.push(`Thời hạn: ${durationText}`);
+  }
+  return features;
+};
 
-export const SubscriptionScreen: React.FC = () => {
-  const navigation = useNavigation();
-  const [selectedPlan, setSelectedPlan] = useState<string | null>(null);
-  const { isLoading, error } = usePayment();
+export function SubscriptionScreen() {
+  const router = useRouter();
+  const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false); // For subscribe button
+  const [plans, setPlans] = useState<SubscriptionPlan[]>([]);
+  const [loadingPlans, setLoadingPlans] = useState(true);
 
-  const handleSubscribe = async (): Promise<void> => {
-    if (!selectedPlan) {
+  useEffect(() => {
+    const fetchPlans = async () => {
+      try {
+        setLoadingPlans(true);
+        const response = await subscriptionService.getPlans();
+        if (response.success && Array.isArray(response.data)) {
+          const activePlans = response.data
+            .filter((plan) => plan.isActive)
+            .sort((a, b) => a.sortOrder - b.sortOrder);
+          setPlans(activePlans);
+        } else {
+          Alert.alert("Lỗi", "Không thể tải danh sách gói đăng ký.");
+        }
+      } catch (error) {
+        console.error("Failed to fetch subscription plans:", error);
+        Alert.alert("Lỗi", "Gặp sự cố khi tải gói. Vui lòng thử lại.");
+      } finally {
+        setLoadingPlans(false);
+      }
+    };
+
+    fetchPlans();
+  }, []);
+
+  const handleSubscribe = () => {
+    if (!selectedPlanId) {
       Alert.alert("Lỗi", "Vui lòng chọn một gói đăng ký");
       return;
     }
 
-    try {
-      await paymentService.createPayment(selectedPlan);
-    } catch (err) {
-      Alert.alert("Lỗi", "Không thể tạo thanh toán. Vui lòng thử lại.");
+    const selectedPlan = plans.find((p) => p._id === selectedPlanId);
+
+    if (selectedPlan) {
+      router.push({
+        pathname: "/(stacks)/payment-qr",
+        params: {
+          id: selectedPlan._id,
+          name: selectedPlan.name,
+          price: selectedPlan.price.toString(),
+        },
+      });
     }
   };
 
-  const handleGoBack = (): void => {
-    navigation.goBack();
+  const handleGoBack = () => {
+    router.back();
   };
+
+  if (loadingPlans) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#00A86B" />
+        <Text>Đang tải danh sách gói...</Text>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.container}>
-      {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity style={styles.backButton} onPress={handleGoBack}>
           <Text style={styles.backButtonText}>← Quay lại</Text>
@@ -87,16 +110,15 @@ export const SubscriptionScreen: React.FC = () => {
       </View>
 
       <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
-        {/* Plans */}
-        {SUBSCRIPTION_PLANS.map((plan: SubscriptionPlan, index: number) => (
+        {plans.map((plan, index) => (
           <TouchableOpacity
-            key={plan.id}
+            key={plan._id}
             style={[
               styles.planCard,
-              selectedPlan === plan.id && styles.selectedPlan,
-              index === 1 && styles.popularPlan, // Premium plan
+              selectedPlanId === plan._id && styles.selectedPlan,
+              index === 1 && styles.popularPlan,
             ]}
-            onPress={() => setSelectedPlan(plan.id)}
+            onPress={() => setSelectedPlanId(plan._id)}
           >
             {index === 1 && (
               <View style={styles.popularBadge}>
@@ -105,10 +127,12 @@ export const SubscriptionScreen: React.FC = () => {
             )}
 
             <Text style={styles.planName}>{plan.name}</Text>
-            <Text style={styles.planPrice}>{plan.price}</Text>
+            <Text style={styles.planPrice}>
+              {plan.price.toLocaleString("vi-VN")}đ
+            </Text>
 
             <View style={styles.featuresContainer}>
-              {plan.features.map((feature: string, featureIndex: number) => (
+              {getFeaturesFromPlan(plan).map((feature, featureIndex) => (
                 <View key={featureIndex} style={styles.featureRow}>
                   <Text style={styles.checkIcon}>✓</Text>
                   <Text style={styles.featureText}>{feature}</Text>
@@ -116,7 +140,7 @@ export const SubscriptionScreen: React.FC = () => {
               ))}
             </View>
 
-            {selectedPlan === plan.id && (
+            {selectedPlanId === plan._id && (
               <View style={styles.selectedIndicator}>
                 <Text style={styles.selectedText}>Đã chọn</Text>
               </View>
@@ -124,21 +148,13 @@ export const SubscriptionScreen: React.FC = () => {
           </TouchableOpacity>
         ))}
 
-        {/* Error Message */}
-        {error && (
-          <View style={styles.errorContainer}>
-            <Text style={styles.errorText}>{error}</Text>
-          </View>
-        )}
-
-        {/* Subscribe Button */}
         <TouchableOpacity
           style={[
             styles.subscribeButton,
-            (!selectedPlan || isLoading) && styles.disabledButton,
+            (!selectedPlanId || isLoading) && styles.disabledButton,
           ]}
           onPress={handleSubscribe}
-          disabled={!selectedPlan || isLoading}
+          disabled={!selectedPlanId || isLoading}
         >
           {isLoading ? (
             <ActivityIndicator color="#fff" />
@@ -147,7 +163,6 @@ export const SubscriptionScreen: React.FC = () => {
           )}
         </TouchableOpacity>
 
-        {/* Terms */}
         <Text style={styles.termsText}>
           Bằng cách đăng ký, bạn đồng ý với{" "}
           <Text style={styles.linkText}>Điều khoản dịch vụ</Text> và{" "}
@@ -156,12 +171,17 @@ export const SubscriptionScreen: React.FC = () => {
       </ScrollView>
     </View>
   );
-};
+}
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: "#f8f9fa",
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
   },
   header: {
     backgroundColor: "#00A86B",
@@ -255,47 +275,36 @@ const styles = StyleSheet.create({
   },
   checkIcon: {
     color: "#00A86B",
+    marginRight: 10,
     fontSize: 16,
-    fontWeight: "bold",
-    marginRight: 12,
   },
   featureText: {
     fontSize: 16,
-    color: "#333",
+    color: "#555",
     flex: 1,
   },
   selectedIndicator: {
+    position: "absolute",
+    bottom: 16,
+    right: 16,
     backgroundColor: "#00A86B",
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 20,
-    alignSelf: "center",
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
   },
   selectedText: {
     color: "#fff",
-    fontSize: 14,
     fontWeight: "600",
-  },
-  errorContainer: {
-    backgroundColor: "#ffebee",
-    padding: 16,
-    borderRadius: 8,
-    marginBottom: 20,
-  },
-  errorText: {
-    color: "#c62828",
-    textAlign: "center",
-    fontSize: 14,
   },
   subscribeButton: {
     backgroundColor: "#00A86B",
-    paddingVertical: 18,
-    borderRadius: 12,
+    padding: 16,
+    borderRadius: 100,
     alignItems: "center",
     marginVertical: 20,
   },
   disabledButton: {
-    backgroundColor: "#ccc",
+    backgroundColor: "#A0C4A7",
   },
   subscribeButtonText: {
     color: "#fff",
@@ -304,9 +313,8 @@ const styles = StyleSheet.create({
   },
   termsText: {
     fontSize: 12,
-    color: "#666",
+    color: "#888",
     textAlign: "center",
-    lineHeight: 18,
     marginBottom: 30,
   },
   linkText: {

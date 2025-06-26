@@ -1,10 +1,13 @@
 export interface PaymentResponse {
-  data: {
-    paymentUrl: string;
-    orderCode: string;
-  };
-  success: boolean;
-  message?: string;
+  paymentId: string;
+  amount: number;
+  description: string;
+  subscriptionId: string;
+  orderCode: string;
+  bankAccount: string;
+  bankName: string;
+  accountName: string;
+  transferContent: string;
 }
 
 export interface PaymentStatusResponse {

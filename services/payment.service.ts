@@ -4,13 +4,19 @@ import { authService } from "./authServices.service";
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL;
 
 export const paymentService = {
-  createPayment: async (planId: string): Promise<PaymentResponse> => {
+  createPayment: async (body: {
+    subscriptionId?: string;
+    planId?: string;
+    description?: string;
+  }): Promise<PaymentResponse> => {
     try {
       const token = await authService.getToken();
 
+      console.log("Creating payment with body:", body);
+
       const response = await fetch(`${API_BASE_URL}/payment/create`, {
         method: "POST",
-        body: JSON.stringify({ planId }),
+        body: JSON.stringify(body),
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
@@ -21,7 +27,9 @@ export const paymentService = {
         throw new Error("Failed to create payment");
       }
 
-      return await response.json();
+      const data = await response.json();
+      console.log("Payment response:", data);
+      return data;
     } catch (error) {
       console.error("Error creating payment:", error);
       throw error;
