@@ -4,7 +4,7 @@
     "slug": "skinora",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/Skinora.png",
+    "icon": "./assets/images/icon.png",
     "userInterfaceStyle": "light",
     "splash": {
       "image": "./assets/images/Skinora.png",
@@ -29,7 +29,7 @@
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/images/adaptive-icon.png",
+        "foregroundImage": "./assets/images/icon.png",
         "backgroundColor": "#ffffff"
       },
       "usesCleartextTraffic": true,

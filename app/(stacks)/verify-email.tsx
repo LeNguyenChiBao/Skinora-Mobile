@@ -14,6 +14,10 @@ import {
 } from "react-native";
 import { authService } from "../../services/authServices.service";
 
+export const options = {
+  headerShown: false,
+};
+
 export default function VerifyEmailScreen() {
   const { email, token } = useLocalSearchParams();
   const [isLoading, setIsLoading] = useState(false);
@@ -124,6 +128,7 @@ export default function VerifyEmailScreen() {
               setTimeout(() => {
                 refreshAuthState();
               }, 100);
+              router.replace("/(stacks)/login");
             } catch (error) {
               console.error("Logout error:", error);
               setTimeout(() => {
@@ -183,7 +188,7 @@ export default function VerifyEmailScreen() {
               )}
             </TouchableOpacity>
             <TouchableOpacity onPress={() => handleLogout()}>
-              <Text>Logout</Text>
+              <Text style={styles.logoutButton}>Đăng xuất</Text>
             </TouchableOpacity>
           </View>
           <View style={styles.helpContainer}>
@@ -265,6 +270,17 @@ const styles = StyleSheet.create({
   },
   disabledButton: {
     backgroundColor: "#ccc",
+  },
+  logoutButton: {
+    backgroundColor: "#f44336",
+    paddingVertical: 16,
+    borderRadius: 12,
+    alignItems: "center",
+    textAlign: "center",
+    color: "#fff",
+    fontSize: 16,
+    fontWeight: "600",
+    marginTop: 5,
   },
   resendButtonText: { color: "#fff", fontSize: 16, fontWeight: "600" },
   helpContainer: {

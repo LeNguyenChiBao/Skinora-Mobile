@@ -1,8 +1,9 @@
+import { addressService } from "@/services/addressService.service";
 import { authService } from "@/services/authServices.service";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import { Picker } from "@react-native-picker/picker";
 import { useRouter } from "expo-router";
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -18,84 +19,36 @@ import {
   View,
 } from "react-native";
 
+// Add options to hide header
+export const options = {
+  headerShown: false,
+};
+
+interface Province {
+  code: string;
+  name: string;
+  englishName: string;
+  administrativeLevel: string;
+  decree: string;
+}
+
+interface Commune {
+  code: string;
+  name: string;
+  englishName: string;
+  administrativeLevel: string;
+  provinceCode: string;
+  provinceName: string;
+  decree: string;
+}
+
 export default function RegisterScreen() {
   const router = useRouter();
-  // Vietnamese provinces and cities (short list for demo, expand as needed)
-  const provinces = [
-    {
-      name: "Hà Nội",
-      cities: [
-        "Ba Đình",
-        "Hoàn Kiếm",
-        "Tây Hồ",
-        "Long Biên",
-        "Cầu Giấy",
-        "Đống Đa",
-        "Hai Bà Trưng",
-        "Hoàng Mai",
-        "Thanh Xuân",
-      ],
-    },
-    {
-      name: "Hồ Chí Minh",
-      cities: [
-        "Quận 1",
-        "Quận 2",
-        "Quận 3",
-        "Quận 4",
-        "Quận 5",
-        "Quận 6",
-        "Quận 7",
-        "Quận 8",
-        "Quận 9",
-        "Quận 10",
-        "Quận 11",
-        "Quận 12",
-        "Bình Thạnh",
-        "Gò Vấp",
-        "Phú Nhuận",
-        "Tân Bình",
-        "Tân Phú",
-        "Thủ Đức",
-      ],
-    },
-    {
-      name: "Đà Nẵng",
-      cities: [
-        "Hải Châu",
-        "Thanh Khê",
-        "Sơn Trà",
-        "Ngũ Hành Sơn",
-        "Liên Chiểu",
-        "Cẩm Lệ",
-        "Hòa Vang",
-      ],
-    },
-    {
-      name: "Hải Phòng",
-      cities: [
-        "Hồng Bàng",
-        "Lê Chân",
-        "Ngô Quyền",
-        "Kiến An",
-        "Hải An",
-        "Dương Kinh",
-        "Đồ Sơn",
-      ],
-    },
-    {
-      name: "Cần Thơ",
-      cities: [
-        "Ninh Kiều",
-        "Bình Thủy",
-        "Cái Răng",
-        "Ô Môn",
-        "Thốt Nốt",
-        "Phong Điền",
-        "Cờ Đỏ",
-      ],
-    },
-  ];
+
+  const [provinces, setProvinces] = useState<Province[]>([]);
+  const [communes, setCommunes] = useState<Commune[]>([]);
+  const [isLoadingProvinces, setIsLoadingProvinces] = useState(false);
+  const [isLoadingCommunes, setIsLoadingCommunes] = useState(false);
 
   const [form, setForm] = useState({
     email: "",
@@ -111,9 +64,87 @@ export default function RegisterScreen() {
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [date, setDate] = useState<Date | undefined>(undefined);
 
-  // Get cities for selected province
-  const selectedProvince = provinces.find((p) => p.name === form.province);
-  const cities = selectedProvince ? selectedProvince.cities : [];
+  // Load provinces on component mount
+  useEffect(() => {
+    loadProvinces();
+  }, []);
+
+  // Load communes when province changes
+  useEffect(() => {
+    if (form.province) {
+      loadCommunes(form.province);
+    } else {
+      setCommunes([]);
+    }
+  }, [form.province]);
+
+  const loadProvinces = async () => {
+    setIsLoadingProvinces(true);
+    try {
+      const provincesData = await addressService.getProvinces();
+      console.log("Provinces API Response:", provincesData);
+      
+      // Check if the response is an object with a data property
+      let provincesArray: Province[] = [];
+      if (Array.isArray(provincesData)) {
+        provincesArray = provincesData;
+      } else if (provincesData && provincesData.data && Array.isArray(provincesData.data)) {
+        provincesArray = provincesData.data;
+      } else if (provincesData && provincesData.provinces && Array.isArray(provincesData.provinces)) {
+        provincesArray = provincesData.provinces;
+      } else if (provincesData && provincesData.results && Array.isArray(provincesData.results)) {
+        provincesArray = provincesData.results;
+      }
+      
+      // Filter out invalid entries (empty code or "Số lượng" entries)
+      const validProvinces = provincesArray.filter(
+        (province) => province.code && province.code.trim() !== "" && 
+        !province.name.includes("Số lượng")
+      );
+      
+      console.log("Processed provinces array:", validProvinces);
+      setProvinces(validProvinces);
+    } catch (error) {
+      console.error("Error loading provinces:", error);
+      Alert.alert(
+        "Lỗi",
+        "Không thể tải danh sách tỉnh/thành phố. Vui lòng thử lại."
+      );
+    } finally {
+      setIsLoadingProvinces(false);
+    }
+  };
+
+  const loadCommunes = async (provinceCode: string) => {
+    setIsLoadingCommunes(true);
+    try {
+      const communesData = await addressService.getCommunesByProvince(provinceCode);      
+
+      let communesArray: Commune[] = [];
+      if (Array.isArray(communesData)) {
+        communesArray = communesData;
+      } else if (communesData && communesData.data && Array.isArray(communesData.data)) {
+        communesArray = communesData.data;
+      } else if (communesData && communesData.communes && Array.isArray(communesData.communes)) {
+        communesArray = communesData.communes;
+      } else if (communesData && communesData.results && Array.isArray(communesData.results)) {
+        communesArray = communesData.results;
+      }
+      
+      // Filter out invalid entries (empty code or "Số lượng" entries)
+      const validCommunes = communesArray.filter(
+        (commune) => commune.code && commune.code.trim() !== "" && 
+        !commune.name.includes("Số lượng")
+      );
+      
+      setCommunes(validCommunes);
+    } catch (error) {
+      console.error("Error loading communes:", error);
+      Alert.alert("Lỗi", "Không thể tải danh sách quận/huyện. Vui lòng thử lại.");
+    } finally {
+      setIsLoadingCommunes(false);
+    }
+  };
 
   const handleChange = (key: string, value: string) => {
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -152,8 +183,12 @@ export default function RegisterScreen() {
 
     setIsLoading(true);
     try {
+      // Find selected province and commune names
+      const selectedProvince = provinces.find((p) => p.code === form.province);
+      const selectedCommune = communes.find((c) => c.code === form.city);
+
       // Combine address parts into a single string
-      const fullAddress = `${form.streetAddress}, ${form.city}, ${form.province}`;
+      const fullAddress = `${form.streetAddress}, ${selectedCommune?.name}, ${selectedProvince?.name}`;
 
       const response = await authService.register({
         email: form.email,
@@ -174,7 +209,6 @@ export default function RegisterScreen() {
         Alert.alert("Lỗi", errorMessage);
       }
     } catch (error: any) {
-      // Handle cases where the error from the catch block might be an object
       const errorMessage = error?.message || "Có lỗi xảy ra. Vui lòng thử lại.";
       Alert.alert("Lỗi", errorMessage);
     } finally {
@@ -191,6 +225,7 @@ export default function RegisterScreen() {
       >
         <ScrollView contentContainerStyle={styles.scrollContainer}>
           <Text style={styles.title}>Đăng ký tài khoản</Text>
+
           <View style={styles.inputContainer}>
             <Text style={styles.inputLabel}>Email</Text>
             <TextInput
@@ -252,6 +287,7 @@ export default function RegisterScreen() {
               />
             )}
           </View>
+
           <View style={styles.inputContainer}>
             <Text style={styles.inputLabel}>Tỉnh/Thành phố</Text>
             <View style={styles.pickerWrapper}>
@@ -259,30 +295,59 @@ export default function RegisterScreen() {
                 selectedValue={form.province}
                 onValueChange={(v: string) => handleChange("province", v)}
                 style={styles.picker}
+                enabled={!isLoadingProvinces}
               >
-                <Picker.Item label="Chọn tỉnh/thành phố" value="" />
+                <Picker.Item
+                  label={isLoadingProvinces ? "Đang tải..." : "Chọn tỉnh/thành phố"}
+                  value=""
+                />
                 {provinces.map((p) => (
-                  <Picker.Item key={p.name} label={p.name} value={p.name} />
+                  <Picker.Item key={p.code} label={p.name} value={p.code} />
                 ))}
               </Picker>
+              {isLoadingProvinces && (
+                <ActivityIndicator
+                  size="small"
+                  color="#00A86L"
+                  style={styles.loadingIndicator}
+                />
+              )}
             </View>
           </View>
+
           <View style={styles.inputContainer}>
-            <Text style={styles.inputLabel}>Quận/Huyện/Thành phố</Text>
+            <Text style={styles.inputLabel}>Quận/Huyện/Phường/Xã</Text>
             <View style={styles.pickerWrapper}>
               <Picker
                 selectedValue={form.city}
                 onValueChange={(v: string) => handleChange("city", v)}
                 style={styles.picker}
-                enabled={!!form.province}
+                enabled={!!form.province && !isLoadingCommunes}
               >
-                <Picker.Item label="Chọn quận/huyện/thành phố" value="" />
-                {cities.map((c) => (
-                  <Picker.Item key={c} label={c} value={c} />
+                <Picker.Item
+                  label={
+                    isLoadingCommunes
+                      ? "Đang tải..."
+                      : !form.province
+                      ? "Chọn tỉnh/thành phố trước"
+                      : "Chọn quận/huyện/phường/xã"
+                  }
+                  value=""
+                />
+                {communes.map((c) => (
+                  <Picker.Item key={c.code} label={c.name} value={c.code} />
                 ))}
               </Picker>
+              {isLoadingCommunes && (
+                <ActivityIndicator
+                  size="small"
+                  color="#00A86L"
+                  style={styles.loadingIndicator}
+                />
+              )}
             </View>
           </View>
+
           <View style={styles.inputContainer}>
             <Text style={styles.inputLabel}>Số nhà, tên đường</Text>
             <TextInput
@@ -292,6 +357,7 @@ export default function RegisterScreen() {
               onChangeText={(v) => handleChange("streetAddress", v)}
             />
           </View>
+
           <TouchableOpacity
             style={[
               styles.registerButton,
@@ -307,6 +373,7 @@ export default function RegisterScreen() {
               <Text style={styles.registerButtonText}>Đăng ký</Text>
             )}
           </TouchableOpacity>
+
           <View style={styles.loginContainer}>
             <Text style={styles.loginText}>Đã có tài khoản? </Text>
             <TouchableOpacity onPress={() => router.replace("/(stacks)/login")}>
@@ -343,7 +410,7 @@ const styles = StyleSheet.create({
   inputLabel: {
     fontSize: 14,
     fontWeight: "600",
-    color: "#00A86L",
+    color: "#00A86B",
     marginBottom: 8,
   },
   input: {
@@ -392,9 +459,16 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#E0E0E0",
     overflow: "hidden",
+    position: "relative",
   },
   picker: {
     width: "100%",
     color: "#222",
+  },
+  loadingIndicator: {
+    position: "absolute",
+    right: 16,
+    top: "50%",
+    transform: [{ translateY: -10 }],
   },
 });
