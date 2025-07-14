@@ -29,7 +29,7 @@ const getFeaturesFromPlan = (plan: SubscriptionPlan): string[] => {
     const durationText =
       plan.duration >= 30
         ? `${Math.floor(plan.duration / 30)} tháng`
-        : `${plan.duration} ngày`;
+        : `${plan.duration} tháng`;
     features.push(`Thời hạn: ${durationText}`);
   }
   return features;

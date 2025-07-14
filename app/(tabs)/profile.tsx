@@ -13,6 +13,7 @@ import {
   ActivityIndicator,
   Alert,
   Image,
+  Modal,
   ScrollView,
   StyleSheet,
   Text,
@@ -46,6 +47,10 @@ export default function ProfileScreen() {
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [loadingAppointments, setLoadingAppointments] = useState(false);
   const [showAppointments, setShowAppointments] = useState(false);
+  const [showFeedbackModal, setShowFeedbackModal] = useState(false);
+  const [feedbackContent, setFeedbackContent] = useState("");
+  const [selectedRating, setSelectedRating] = useState(0);
+  const [submittingFeedback, setSubmittingFeedback] = useState(false);
 
   useEffect(() => {
     const fetchUserData = async () => {
@@ -147,6 +152,159 @@ export default function ProfileScreen() {
         },
       },
     ]);
+  };
+
+  const handleSubmitFeedback = async () => {
+    if (!user?.id) {
+      Alert.alert("Lỗi", "Vui lòng đăng nhập để gửi đánh giá");
+      return;
+    }
+
+    if (selectedRating === 0) {
+      Alert.alert("Lỗi", "Vui lòng chọn số sao đánh giá");
+      return;
+    }
+
+    if (!feedbackContent.trim()) {
+      Alert.alert("Lỗi", "Vui lòng nhập nội dung đánh giá");
+      return;
+    }
+
+    try {
+      setSubmittingFeedback(true);
+      
+      const token = await authService.getToken();
+      if (!token) {
+        Alert.alert("Lỗi", "Không tìm thấy token xác thực");
+        return;
+      }
+
+      const API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL || "https://localhost:3000";
+      
+      const response = await fetch(`${API_BASE_URL}/feedback`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          userId: user.id,
+          content: feedbackContent.trim(),
+          rating: selectedRating,
+        }),
+      });
+
+      const result = await response.json();
+
+      if (response.ok && result.success) {
+        Alert.alert(
+          "Thành công", 
+          "Cảm ơn bạn đã đánh giá! Góp ý của bạn rất có ý nghĩa với chúng tôi.",
+          [
+            {
+              text: "OK",
+              onPress: () => {
+                setShowFeedbackModal(false);
+                setFeedbackContent("");
+                setSelectedRating(0);
+              }
+            }
+          ]
+        );
+      } else {
+        Alert.alert("Lỗi", result.message || "Không thể gửi đánh giá. Vui lòng thử lại.");
+      }
+    } catch (error) {
+      console.error("Error submitting feedback:", error);
+      Alert.alert("Lỗi", "Có lỗi xảy ra khi gửi đánh giá. Vui lòng thử lại.");
+    } finally {
+      setSubmittingFeedback(false);
+    }
+  };
+
+  const renderStarRating = () => {
+    return (
+      <View style={styles.starContainer}>
+        {[1, 2, 3, 4, 5].map((star) => (
+          <TouchableOpacity
+            key={star}
+            onPress={() => setSelectedRating(star)}
+            style={styles.starButton}
+          >
+            <Ionicons
+              name={star <= selectedRating ? "star" : "star-outline"}
+              size={32}
+              color={star <= selectedRating ? "#FFD700" : "#CCC"}
+            />
+          </TouchableOpacity>
+        ))}
+      </View>
+    );
+  };
+
+  const renderFeedbackModal = () => {
+    return (
+      <Modal
+        visible={showFeedbackModal}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setShowFeedbackModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.feedbackModalContainer}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Đánh giá ứng dụng</Text>
+              <TouchableOpacity
+                onPress={() => setShowFeedbackModal(false)}
+                style={styles.closeModalButton}
+              >
+                <Ionicons name="close" size={24} color="#666" />
+              </TouchableOpacity>
+            </View>
+
+            <Text style={styles.ratingLabel}>Bạn đánh giá ứng dụng bao nhiêu sao?</Text>
+            {renderStarRating()}
+
+            <Text style={styles.feedbackLabel}>Chia sẻ trải nghiệm của bạn:</Text>
+            <TextInput
+              style={styles.feedbackInput}
+              value={feedbackContent}
+              onChangeText={setFeedbackContent}
+              placeholder="Nhập đánh giá của bạn về ứng dụng..."
+              placeholderTextColor="#999"
+              multiline
+              numberOfLines={4}
+              maxLength={500}
+            />
+
+            <View style={styles.modalActions}>
+              <TouchableOpacity
+                style={styles.cancelFeedbackButton}
+                onPress={() => setShowFeedbackModal(false)}
+              >
+                <Text style={styles.cancelFeedbackText}>Hủy</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[
+                  styles.submitFeedbackButton,
+                  (selectedRating === 0 || !feedbackContent.trim() || submittingFeedback) && 
+                  styles.disabledSubmitButton
+                ]}
+                onPress={handleSubmitFeedback}
+                disabled={selectedRating === 0 || !feedbackContent.trim() || submittingFeedback}
+              >
+                {submittingFeedback ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Text style={styles.submitFeedbackText}>Gửi đánh giá</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+    );
   };
 
   if (loading) {
@@ -461,6 +619,18 @@ export default function ProfileScreen() {
       <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
         <Text style={styles.logoutText}>Đăng xuất</Text>
       </TouchableOpacity>
+
+      <TouchableOpacity 
+        style={styles.ratingButton}
+        onPress={() => setShowFeedbackModal(true)}
+      >
+        <View style={styles.ratingButtonContent}>
+          <Ionicons name="star" size={20} color="#FFD700" />
+          <Text style={styles.ratingButtonText}>Đánh giá ứng dụng</Text>
+        </View>
+      </TouchableOpacity>
+
+      {renderFeedbackModal()}
     </ScrollView>
   );
 }
@@ -769,6 +939,121 @@ const styles = StyleSheet.create({
   },
   statusText: {
     fontSize: 12,
+    fontWeight: "600",
+  },
+  ratingButton: {
+    backgroundColor: "#FFFFFF",
+    margin: 15,
+    padding: 15,
+    borderRadius: 16,
+    alignItems: "center",
+    marginBottom: 30,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 6,
+    elevation: 4,
+    borderWidth: 1,
+    borderColor: "#FFD700",
+  },
+  ratingButtonContent: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  ratingButtonText: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#333",
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0, 0, 0, 0.5)",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  feedbackModalContainer: {
+    backgroundColor: "#FFFFFF",
+    margin: 20,
+    borderRadius: 16,
+    padding: 20,
+    width: "90%",
+    maxWidth: 400,
+  },
+  modalHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 20,
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: "bold",
+    color: "#00A86B",
+  },
+  closeModalButton: {
+    padding: 4,
+  },
+  ratingLabel: {
+    fontSize: 16,
+    color: "#333",
+    marginBottom: 15,
+    textAlign: "center",
+  },
+  starContainer: {
+    flexDirection: "row",
+    justifyContent: "center",
+    marginBottom: 20,
+    gap: 8,
+  },
+  starButton: {
+    padding: 4,
+  },
+  feedbackLabel: {
+    fontSize: 16,
+    color: "#333",
+    marginBottom: 10,
+  },
+  feedbackInput: {
+    borderWidth: 1,
+    borderColor: "#E0E0E0",
+    borderRadius: 12,
+    padding: 15,
+    fontSize: 16,
+    color: "#333",
+    textAlignVertical: "top",
+    minHeight: 100,
+    marginBottom: 20,
+  },
+  modalActions: {
+    flexDirection: "row",
+    gap: 12,
+  },
+  cancelFeedbackButton: {
+    flex: 1,
+    backgroundColor: "#F5F5F5",
+    padding: 15,
+    borderRadius: 12,
+    alignItems: "center",
+  },
+  cancelFeedbackText: {
+    fontSize: 16,
+    color: "#666",
+    fontWeight: "500",
+  },
+  submitFeedbackButton: {
+    flex: 1,
+    backgroundColor: "#00A86B",
+    padding: 15,
+    borderRadius: 12,
+    alignItems: "center",
+  },
+  disabledSubmitButton: {
+    backgroundColor: "#CCC",
+  },
+  submitFeedbackText: {
+    fontSize: 16,
+    color: "#FFFFFF",
     fontWeight: "600",
   },
 });
