@@ -172,33 +172,16 @@ export default function ProfileScreen() {
 
     try {
       setSubmittingFeedback(true);
-      
-      const token = await authService.getToken();
-      if (!token) {
-        Alert.alert("Lỗi", "Không tìm thấy token xác thực");
-        return;
-      }
 
-      const API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL || "https://localhost:3000";
-      
-      const response = await fetch(`${API_BASE_URL}/feedback`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          userId: user.id,
-          content: feedbackContent.trim(),
-          rating: selectedRating,
-        }),
+      const result = await userService.createFeedback({
+        userId: user.id,
+        content: feedbackContent.trim(),
+        rating: selectedRating,
       });
 
-      const result = await response.json();
-
-      if (response.ok && result.success) {
+      if (result.success) {
         Alert.alert(
-          "Thành công", 
+          "Thành công",
           "Cảm ơn bạn đã đánh giá! Góp ý của bạn rất có ý nghĩa với chúng tôi.",
           [
             {
@@ -207,16 +190,22 @@ export default function ProfileScreen() {
                 setShowFeedbackModal(false);
                 setFeedbackContent("");
                 setSelectedRating(0);
-              }
-            }
+              },
+            },
           ]
         );
       } else {
-        Alert.alert("Lỗi", result.message || "Không thể gửi đánh giá. Vui lòng thử lại.");
+        Alert.alert(
+          "Lỗi",
+          result.message || "Không thể gửi đánh giá. Vui lòng thử lại."
+        );
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error submitting feedback:", error);
-      Alert.alert("Lỗi", "Có lỗi xảy ra khi gửi đánh giá. Vui lòng thử lại.");
+      Alert.alert(
+        "Lỗi",
+        error.message || "Có lỗi xảy ra khi gửi đánh giá. Vui lòng thử lại."
+      );
     } finally {
       setSubmittingFeedback(false);
     }

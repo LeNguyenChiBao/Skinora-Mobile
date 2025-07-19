@@ -1,3 +1,4 @@
+import axios from "axios";
 import { authService } from "./authServices.service";
 
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL;
@@ -5,7 +6,6 @@ const API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL;
 interface UserSubscription {
   _id: string;
   currentSubscription?: string;
-  // Add other user fields as needed
 }
 
 interface UserResponse {
@@ -190,6 +190,25 @@ interface JoinCallResponse {
       status: string;
     };
     userRole: string;
+  };
+}
+
+interface CreateFeedbackRequest {
+  userId: string;
+  content: string;
+  rating: number;
+}
+
+interface CreateFeedbackResponse {
+  success: boolean;
+  message: string;
+  data: {
+    _id: string;
+    userId: string;
+    content: string;
+    rating: number;
+    createdAt: string;
+    updatedAt: string;
   };
 }
 
@@ -751,6 +770,41 @@ export const userService = {
     } catch (error) {
       console.error("❌ Error creating call:", error);
       throw error;
+    }
+  },
+
+  createFeedback: async (
+    feedbackData: CreateFeedbackRequest
+  ): Promise<CreateFeedbackResponse> => {
+    try {
+      const token = await authService.getToken();
+
+      const response = await axios.post(
+        `${API_BASE_URL}/feedback`,
+        feedbackData,
+        {
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+
+      return {
+        success: response.data.success,
+        message: response.data.message,
+        data: response.data.data,
+      };
+    } catch (error: any) {
+      console.error("Error creating feedback:", error);
+
+      if (error.response) {
+        throw new Error(error.response.data?.message || "Failed to submit feedback");
+      } else if (error.request) {
+        throw new Error("Network error. Please check your connection.");
+      } else {
+        throw new Error("Failed to submit feedback");
+      }
     }
   },
 
